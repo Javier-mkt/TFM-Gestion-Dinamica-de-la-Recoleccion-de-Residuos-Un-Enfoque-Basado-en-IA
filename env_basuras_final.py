@@ -14,7 +14,7 @@ import osmnx as ox
 
 class RecogidaBasurasEnv(gym.Env):
 
-    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 2500, mascara = True): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
+    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 2500, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
         super().__init__()
         self.nodos_indice = nodos_indice
         self.aristas_indice = aristas_indice
@@ -30,6 +30,10 @@ class RecogidaBasurasEnv(gym.Env):
         self.nodo_anterior = None
 
         self.adjacencia = self._nodos_adjacentes()  
+
+        self.seed_value = seed
+        if seed is not None:
+            self.set_seed(seed)
 
         # Espacio de acciones 
         self.action_space = spaces.Dict({
@@ -56,9 +60,17 @@ class RecogidaBasurasEnv(gym.Env):
             adj[u].append(v)
         return adj
     
+    def set_seed(self, seed):
+        self.seed_value = seed
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
+    def reset(self, seed = None, options = None):  
+        if seed is not None:
+            self.set_seed(seed)
+        elif self.seed_value is not None:
+            self.set_seed(self.seed_value)
 
-    def reset(self, seed = 123, options = None):  # Seed 123 para desarrollo, None para entrenamineto agente, varias seeds fijas para fase final
         super().reset(seed = seed)
         self.nodo_actual = self.nodo_inicial
         self.carga_camion = 0.0
