@@ -1,295 +1,290 @@
 
 
-### Import libraries
-
 import math
 import os
 import sys
 import time
 
 import numpy as np
-import gymnasium
+import gymnasium as gym
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-# Para hacer multiproceso!
+# Para multiproceso
 import torch.multiprocessing as mp
+from torch.distributions import Categorical
 
 ### Global variables
 
-MODEL_PATH = 'breakout_a3c.pth'
-ENV_NAME = os.getenv('ENV_NAME', 'BreakoutDeterministic-v4')
+MODEL_PATH = 'recogida_basuras_a3c.pth'
+ENV_NAME = "RecogidaBasurasEnv"  # solo a modo informativo
 SEED = 22
-NUM_PROCESSES = 8
-EPISODES_TRAINING = 5000
-EPISODES_TESTING = 5000
-HEIGHT = 84
-WIDTH = 84
-N_FRAMES = 4
+NUM_PROCESSES = 1                 # ≥2 para A3C real (1 test + 1 train). Si pones 1, entreno en foreground.
+EPISODES_TRAINING = 50
+EPISODES_TESTING = 10
 VALUE_LOSS_COEF = 0.5
+ENTROPY_BETA = 0.01               # bonus de entropía para explorar mejor (opcional)
 GAMMA = 0.99
+LR = 2.5e-4
+
 TRAINING_PARAMETERS = {
-    'frames': N_FRAMES,
-    'trajectory_steps': 512,
+    'trajectory_steps': 10000,
     'num_processes': NUM_PROCESSES
 }
 
-
 ### Define model architecture
 
-# Función para obtener la arquitectura del modelo actor-critic
-# Nótese que tanto actor como critic comparten una etapa convolucional.
-# Luego, la red se bifurca en dos salidad, una para el actor, y otra para el crític.
-# El actor predice distribución de probabilidad de las acciones dado une stado.
-# Sin embargo, en la arquitectura no aplicamos aún la activación softmax, lo haremos más adelante.
-# De esta forma, podemos realizar operaciones más eficientes, como log_softmax, a partir de los logits.
-
 from modelo_gnn_final import ActorCriticGNN, EncoderGNN, tensorizacion_grafo
+from env_basuras_final import RecogidaBasurasEnv
 
-# 1. Tensorizar observación del entorno
-x, edge_index, edge_attr = tensorizacion_grafo(obs)
-batch = torch.zeros(x.size(0), dtype=torch.long)
+# Factory del entorno (ajusta si necesitas parámetros como nodos_indice, aristas_indice)
+def make_env():
+    # return RecogidaBasurasEnv(nodos_indice, aristas_indice)
+    return RecogidaBasurasEnv()
 
-# 2. Paso por el encoder
-encoder = EncoderGNN
-h = EncoderGNN(x, edge_index, edge_attr)
+# Wrapper que acopla EncoderGNN + ActorCriticGNN
+class ActorCritic(nn.Module):
+    def __init__(self, num_nodes, hidden_dim=64, num_acciones_tipo=2):
+        super().__init__()
+        # Encoder con 5 features por nodo y 2 por arista (según tu tensorización)
+        self.encoder = EncoderGNN(
+            in_node_features=5,
+            in_edge_features=2,
+            hidden_dim=hidden_dim
+        )
+        # Actor-Crítico: sabe cuántos nodos tiene tu grafo
+        self.ac = ActorCriticGNN(
+            hidden_dim=hidden_dim,
+            num_nodes=num_nodes,
+            num_acciones_tipo=num_acciones_tipo
+        )
 
-# 3. Paso por el actor-crítico
-tipo_logits, destino_logits, value = actor_critic(h, batch, mascara_acciones=info["mascara"])
+    def forward(self, x, edge_index, edge_attr, batch, mascara_acciones=None):
+        h = self.encoder(x, edge_index, edge_attr)
+        return self.ac(h, batch, mascara_acciones=mascara_acciones)
 
-# Función para traspasar los gradientes obtenidos en un proceso al modelo global
+
+
+# Máscara a logits (pone -inf donde la acción no es válida)
+def apply_mask_to_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    # logits [B, A], mask [B, A] con 1 válidas y 0 inválidas
+    invalid = (mask == 0)
+    logits = logits.masked_fill(invalid, float("-inf"))
+    return logits
+
+# Transfiere gradientes del modelo local al global (sin return prematuro)
 def ensure_shared_grads(model, shared_model):
-    for param, shared_param in zip(model.parameters(),
-                                   shared_model.parameters()):
+    for param, shared_param in zip(model.parameters(), shared_model.parameters()):
         if shared_param.grad is not None:
-            return
+            pass
         shared_param._grad = param.grad
 
+# Selección de acción (una decisión para 'tipo' y otra para 'destino')
+def select_action(model, obs, info, device="cpu"):
+    # Preparar entrada
+    x, edge_index, edge_attr = tensorizacion_grafo(obs)
+    batch = torch.zeros(x.size(0), dtype=torch.long, device=device)
+    x, edge_index, edge_attr = x.to(device), edge_index.to(device), edge_attr.to(device)
 
+    # Máscaras booleanas
+    mask_tipo = torch.tensor(info["mascara"]["mascara_tipo"], dtype=torch.bool, device=device).unsqueeze(0)
+    mask_dest = torch.tensor(info["mascara"]["mascara_destino"], dtype=torch.bool, device=device).unsqueeze(0)
+    mascara = {"tipo": mask_tipo, "destino": mask_dest}
+    
+    #print(f"[DEBUG select_action] x.shape={x.shape}, edge_index.shape={edge_index.shape}, edge_attr.shape={edge_attr.shape}")
+    #print(f"[DEBUG select_action] mask_tipo sum={mask_tipo.sum().item()}, mask_dest sum={mask_dest.sum().item()}")
+
+
+    # Forward
+    tipo_logits, destino_logits, value = model(x, edge_index, edge_attr, batch, mascara_acciones=mascara)
+
+    #print(f"\n[DEBUG select_action]")
+    #print(f"mask_tipo={mask_tipo.tolist()}  (orden esperado: [mover, recoger])")
+    #print(f"tipo_logits={tipo_logits.detach().cpu().tolist()[0]}")
+    #print(f"destino_logits primeros 10={destino_logits.detach().cpu().tolist()[0][:10]}")
+
+    # Distribuciones
+    tipo_dist = torch.distributions.Categorical(logits=tipo_logits)
+    dest_dist = torch.distributions.Categorical(logits=destino_logits.squeeze(0))  # 👈 quita batch
+
+    tipo_a = tipo_dist.sample()
+    dest_a = dest_dist.sample()
+
+    #print(f"[DEBUG acción elegida] tipo={tipo_a.item()} destino={dest_a.item()}")
+
+    assert mask_tipo[0, tipo_a].item(), f"Se eligió tipo inválido {tipo_a.item()} con máscara {mask_tipo.tolist()}"
+    assert mask_dest[0, dest_a].item(), f"Se eligió destino inválido {dest_a.item()} con máscara {mask_dest.tolist()}"
+
+    logprob = tipo_dist.log_prob(tipo_a) + dest_dist.log_prob(dest_a)
+    entropy = tipo_dist.entropy() + dest_dist.entropy()
+
+    # Asegurar que son escalares
+    action = {"tipo": int(tipo_a.item()), "destino": int(dest_a.item())}
+
+    return action, logprob, value.squeeze(-1), entropy
 
 ### Funciones para el entrenamiento de un agente mediante A3C
 
-def train(rank, episodes, training_params, shared_model, counter, lock, optimizer=None, models_path='models'):
+def train(rank, episodes, training_params, shared_model, counter, lock,
+          nodos_indice, aristas_indice, optimizer=None, models_path='models'):
+    
+    # Prueba guardar pesos
+    if models_path is None:
+        models_path = os.path.abspath("models")
+    os.makedirs(models_path, exist_ok=True)
+    print(f"[DEBUG train] rank={rank} usando models_path={models_path}", flush=True)
+
+
+    print(f"[DEBUG train] rank={rank} iniciado con {episodes} episodios")
     torch.manual_seed(SEED + rank)
-    
-    # Instancia un entorno y modelo para el proceso
-    env = gym.make(ENV_NAME)
-    env.seed(SEED + rank)
-    model = ActorCritic()
-    model.train()
-    
-    # Preparar optimizador. Es el encargado de actualizar los pesos tras obtener los gradientes.
-    # Nótese que se le pasan los pesos del modelo global, que son los que se actualizan, no los del modelo local.
-    optimizer = optim.Adam(shared_model.parameters(), lr=0.00025)
-    
-    # Inicializamos trayectoria y pre-procesamos de observación a estado
-    obs = env.reset()
-    state = None
-    state = update_frame_sequence(state, obs, n_frames=training_params['frames'])
-    
-    ###################################
-    ### Recopilamos trayectoria
-    ###################################
-    
-    # Bucle de episodios de entrenamiento - en este caso, haremos una trayectoria por episodio
-    for _ in range(int(episodes)):
+    device = "cpu"
+
+    # Instancia entorno y modelo local
+    env = RecogidaBasurasEnv(nodos_indice, aristas_indice)
+    local_model = ActorCritic(num_nodes=len(nodos_indice), hidden_dim=64)
+    local_model.load_state_dict(shared_model.state_dict())
+    local_model.train()
+
+    optimizer = optim.Adam(shared_model.parameters(), lr=LR)
+
+    episodic_losses = []
+    episodic_rewards = []
+
+    print("Inicio Entrenamineto")
+
+    for ep in range(int(episodes)):
+        obs, info = env.reset(seed=SEED + rank)
         done = False
-        # Buffer de memoria para ir acumulando values, acciones (probabilidades predichas), y recompensas
-        values, log_probs, rewards  = [], [], []
-        # Al inicito de la tratectoria, cogemos los pesos del último modelo global
-        model.load_state_dict(shared_model.state_dict())
-        # Recorremos la trayectoria - se acaba en el T definido, o al llegar al final.
-        for step in range(training_params['trajectory_steps']):
-            
-            # Hacemos forward al actor-critic dado el estado actual
-            logits, value = model(state.unsqueeze(0))
-            
-            # Obtenemos las probabilidades de la acción a partir de los logits  
-            prob = F.softmax(logits, -1)
-            # Obtenemos las log-probabilities, para posteriormente computar el gradiente de la policy
-            log_prob = F.log_softmax(logits, -1)
-            # Hacemos un muestreo de la acción a realizar a partir de las probabilidades
-            action = prob.multinomial(num_samples=1)
-            log_prob = log_prob.gather(1, Variable(action))
-            
-            # Con la acción seleccionada, se la pasamos al enviroment para obtener la recomensa y siguiente observación
-            obs, reward, done, info = env.step(action.item())
-            reward = calculate_reward(reward) # Post-procesamiento de la recompensa
-            
-            # Contador para tener trazabilidad del numero de steps realizados
-            # Luego se usa por el agente de test para almacenar dicha variable
+
+        values, log_probs, rewards, entropies = [], [], [], []
+        steps = 0
+        ep_reward = 0.0
+
+        while (not done) and (steps < training_params['trajectory_steps']):
+            action, logprob, value, entropy = select_action(local_model, obs, info, device=device)
+            # DEBUG VALIDACIÓN
+            #print(f"[DEBUG main] acción seleccionada = {action}")
+            #print(f"[DEBUG main] máscara tipo = {info['mascara']['mascara_tipo']}, suma máscara destino = {np.sum(info['mascara']['mascara_destino'])}")
+
+            #if action["tipo"] == 0:  # mover
+            #    valido = info["mascara"]["mascara_destino"][action["destino"]]
+            #    print(f"[DEBUG main] destino {action['destino']} válido? {valido}")
+            #    assert valido == 1, f"Destino inválido {action['destino']} pese a máscara {info['mascara']['mascara_destino']}"
+            #elif action["tipo"] == 1:  # recoger
+            #    valido = info["mascara"]["mascara_tipo"][1]
+            #    print(f"[DEBUG main] recoger válido? {valido}")
+            #    assert valido == 1, f"Acción recoger inválida en nodo {info}"
+
+            next_obs, reward, terminated, truncated, next_info = env.step(action)
+            done = terminated or truncated
+
             with lock:
                 counter.value += 1
-            
-            # Actualizamos el estado de la siguiente iteración a partir de la observación obtenida
-            state = update_frame_sequence(state, obs, n_frames=training_params['frames'])
-            
-            # Almacenamiento de los value, log-probs y recompensa de la iteración para posteriormente computar los gradientes
+
             values.append(value)
-            log_probs.append(log_prob)
-            rewards.append(reward)
-            
-            # Si es estado terminal - reseteamos entorno y estado y salimos del bucle
-            if done:
-                obs = env.reset()
-                state = None
-                state = update_frame_sequence(state, obs, n_frames=training_params['frames'])
-                break # Salimos del bucle de la trayectoria si es estado terminal
+            log_probs.append(logprob)
+            entropies.append(entropy)
+            rewards.append(torch.tensor(reward, dtype=torch.float32))
+            ep_reward += float(reward)  #Necesario el float()?
 
-        ###################################
-        ### Prepare for update the policy
-        ###################################
-        
-        # Recompensa de estado final. Si es terminal, recompensa de 0. En caso contrario, estimamos con el value.
-        R = torch.zeros(1, 1)
-        if not done:
-            _, value = model(state.unsqueeze(0))
-            R = value.data
-        values.append(Variable(R))
-        
-        policy_loss, value_loss  = 0, 0
-        R = Variable(R) # Pasamos la recompensa a un tensor de pytorch.
-        # Recorremos la trayectoria de forma inversa, calculando los criterios de optimización
-        for i in reversed(range(len(rewards))):
-            # 1. Obtener las discounted rewards para cada t
-            R = GAMMA * R + rewards[i]
-            # 2. Normalizar la recompensa mediante el value para obtener el advantadge
-            advantage = R - values[i]
-            
-            # 3. Computo de criterio de optimización.
-            # Nótese que se va acumulando los criterios a lo largo de la trayectoria
-            
-            # 3.1. Error cuadrático para el advantadge (advantage.pow(2)).
-            # Con esto se optimiza la rama de la función critic. Recuerda, values[i] viene de dicha rama.
+            obs, info = next_obs, next_info
+            steps += 1
+
+        with torch.no_grad():
+            if not done:
+                _, _, next_value, _ = select_action(local_model, obs, info, device=device)
+                R = next_value
+            else:
+                R = torch.tensor(0.0)
+
+        print(f"Actualización pesos en episodio {ep+1}/{episodes}")
+
+        policy_loss = torch.tensor(0.0)
+        value_loss = torch.tensor(0.0)
+        entropy_bonus = torch.tensor(0.0)
+
+        R_t = R
+        for t in reversed(range(len(rewards))):
+            R_t = rewards[t] + GAMMA * R_t
+            advantage = R_t - values[t]
             value_loss = value_loss + advantage.pow(2)
-            
-            # 3.2. Gradientes de la policy (por eso lo ponemos en negativo) ponderados por el advantadge.
-            # Ahora solo ponemos -log_prob, pero luego sacaremos los gradientes
-            # Para evitar que se actualice el critic en este paso, creamos una nueva variable (Variable(advantage))
-            policy_loss = policy_loss - (log_probs[i] * Variable(advantage))
-        
-        # Limpiamos gradientes del modelo global
+            policy_loss = policy_loss - log_probs[t] * advantage.detach()
+            entropy_bonus = entropy_bonus + entropies[t]
+
+        loss = policy_loss + VALUE_LOSS_COEF * value_loss - ENTROPY_BETA * entropy_bonus
+
         optimizer.zero_grad()
-        # Función de pérdidas combinada. Con VALUE_LOSS_COEF le damos más importancia a la actualización de la policy
-        loss_fn = (policy_loss + VALUE_LOSS_COEF * value_loss)
-        # Con backward computamos los gradientes de los criterios computados anteriormente
-        loss_fn.backward(retain_graph=True)
-        # Pasamos los gradientes del modelo local al global
-        ensure_shared_grads(model, shared_model)
-        # Actualizamos los pasos en dirección de los gradientes
+        loss.backward()
+        ensure_shared_grads(local_model, shared_model)
         optimizer.step()
-        # Guardamos el modelo
-        torch.save(shared_model.state_dict(), MODEL_PATH)
 
-### Funciones para el testeo del agente
+        local_model.load_state_dict(shared_model.state_dict())
 
-def test(rank, episodes, training_params, shared_model, counter, render=True, models_path='models'):
-    torch.manual_seed(SEED + rank)
+        episodic_losses.append(loss.item())
+        episodic_rewards.append(ep_reward)
 
-    env = gym.make(ENV_NAME)
-    model = ActorCritic()
+        print(f"[DEBUG train] rank={rank}, episodio {ep+1}/{episodes} completado | loss={loss.item():.4f} | steps={steps} | recompensa = {ep_reward}")
+
+        # === Guardar modelo cada X episodios (ej. cada 10) ===
+        if models_path and rank == 0 and (ep + 1) % 20 == 0:
+            models_path = os.path.abspath("models")
+            os.makedirs(models_path, exist_ok=True)
+
+            save_path = os.path.join(models_path, f"checkpoint_ep{ep+1}.pt")
+            torch.save(shared_model.state_dict(), save_path)
+            print(f"[DEBUG train] Guardado modelo en {save_path}", flush = True)  # Prueba flush
+
+    logs_path = os.path.join(models_path, "logs")
+    os.makedirs(logs_path, exist_ok=True)
+
+    np.save(os.path.join(logs_path, f"losses_rank{rank}.npy"), episodic_losses)
+    np.save(os.path.join(logs_path, f"rewards_rank{rank}.npy"), episodic_rewards)
+
+    print(f"[DEBUG train] Guardadas curvas de entrenamiento en {logs_path}")
+    if models_path and rank == 0:
+        final_path = os.path.join(models_path, f"final_model_rank{rank}.pt")
+        torch.save(shared_model.state_dict(), final_path)
+        print(f"[DEBUG train] Modelo final guardado en {final_path}")
+
+
+def test(rank, episodes, training_params, shared_model, counter,
+         nodos_indice, aristas_indice, render=False, models_path='models'):
+    print(f"[DEBUG test] rank={rank} iniciado con {episodes} episodios")
+    torch.manual_seed(SEED + 100)
+    device = "cpu"
+
+    env = RecogidaBasurasEnv(nodos_indice, aristas_indice)
+    model = ActorCritic(num_nodes=len(nodos_indice), hidden_dim=64)
     model.eval()
 
-    obs = env.reset()
-    if (not IN_COLAB) and (render):
-        obs = env.render(mode='rgb_array')
-    state = None
-    state = update_frame_sequence(state, obs, n_frames=training_params['frames'])
-
-    rewards, reward_sum = [], 0
-    value_acum, value_avg_best = [], -1000.0
-
-    start_time = time.time()
-    training_time = 0
-    episode, episode_steps = 0, 0
-
-    for _ in range(int(episodes)):
+    for ep in range(int(episodes)):
         model.load_state_dict(shared_model.state_dict())
-
+        obs, info = env.reset(seed=SEED + 100 + ep)
         done = False
-        while not done:
-            logits, value = model(state.unsqueeze(0))
-            prob = F.softmax(logits, -1)
-            action = prob.multinomial(num_samples=1)
+        ep_reward, steps = 0.0, 0
 
-            obs, reward, done, info = env.step(action.item())
-            if (not IN_COLAB) and (render):
-                env.render()
-            reward = calculate_reward(reward)
+        while (not done) and (steps < 5000):
+            x, edge_index, edge_attr = tensorizacion_grafo(obs)
+            batch = torch.zeros(x.size(0), dtype=torch.long, device=device)
+            x, edge_index, edge_attr = x.to(device), edge_index.to(device), edge_attr.to(device)
 
-            episode_steps += 1
-            rewards.append(reward)
-            reward_sum += reward
-            value_acum.append(value.data[0, 0])
+            mask_tipo = torch.tensor(info["mascara"]["mascara_tipo"], dtype=torch.bool, device=device).unsqueeze(0)
+            mask_dest = torch.tensor(info["mascara"]["mascara_destino"], dtype=torch.bool, device=device).unsqueeze(0)
+            mascara = {"tipo": mask_tipo, "destino": mask_dest}
 
-            state = update_frame_sequence(state, obs, n_frames=training_params['frames'])
+            with torch.no_grad():
+                tipo_logits, destino_logits, _ = model(x, edge_index, edge_attr, batch, mascara_acciones=mascara)
+                tipo_logits = apply_mask_to_logits(tipo_logits, mask_tipo)
+                destino_logits = apply_mask_to_logits(destino_logits, mask_dest)
+                tipo_a = torch.argmax(tipo_logits, dim=-1).item()
+                dest_a = torch.argmax(destino_logits, dim=-1).item()
+                action = {"tipo": int(tipo_a), "destino": int(dest_a)}
 
-            if done:
-                episode += 1
-                episode_time = time.time() - start_time
-                training_time += episode_time
-                value_avg = np.mean(value_acum)
+            obs, reward, terminated, truncated, info = env.step((action))
+            done = terminated or truncated
+            ep_reward += float(reward)
+            steps += 1
 
-                if value_avg > value_avg_best:
-                    torch.save(model.state_dict(), 'breakout_a3c_best.pth')
-                    value_avg_best = value_avg
-
-                dict_info = {}
-                dict_info["episode"] = episode
-                dict_info["episode_time_secs"] = (str(episode_time))
-                dict_info["episode_steps"] = (str(episode_steps))
-                dict_info["episode_reward"] = reward_sum
-                dict_info["reward_min"] = np.min(rewards)
-                dict_info["reward_max"] = np.max(rewards)
-                dict_info["reward_avg_by_step"] = np.mean(rewards)
-                dict_info["value_avg"] = value_avg
-                dict_info["training_time"] = training_time
-                dict_info["training_steps"] = (str(counter.value))
-
-                print(dict_info)
-
-                rewards, reward_sum = [], 0
-                episode_steps = 0
-                start_time = time.time()
-
-                obs = env.reset()
-                if (not IN_COLAB) and (render):
-                    obs = env.render(mode='rgb_array')
-                state = None
-                state = update_frame_sequence(state, obs, n_frames=training_params['frames'])
-
-                break
-
-
-if __name__ == '__main__':
-    torch.manual_seed(22)
-
-    shared_model = ActorCritic()
-    shared_model.share_memory()
-
-    num_processes = int(TRAINING_PARAMETERS['num_processes'])
-    processes = []
-
-    counter = mp.Value('i', 0)
-    lock = mp.Lock()
-
-    print("Launching testing process")
-    p = mp.Process(
-        target=test,
-        args=(num_processes, EPISODES_TESTING, TRAINING_PARAMETERS,
-            shared_model, counter, lock, None))
-    p.start()
-    processes.append(p)
-
-    print("Launching {} training processes".format(NUM_PROCESSES - 1))
-    for rank in range(0, num_processes - 1):
-        p = mp.Process(
-            target=train,
-            args=(rank, EPISODES_TRAINING, TRAINING_PARAMETERS, shared_model, counter, lock, None, None))
-        p.start()
-        processes.append(p)
-
-    for p in processes:
-        p.join()
+        print(f"[DEBUG test] rank={rank}, episodio {ep+1}/{episodes} terminado | reward={ep_reward:.2f} | steps={steps} | steps_total={counter.value}")

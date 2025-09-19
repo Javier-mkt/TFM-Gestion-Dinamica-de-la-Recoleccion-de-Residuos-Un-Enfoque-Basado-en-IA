@@ -92,7 +92,7 @@ class ActorCriticGNN(nn.Module):
 
         # Actor
         tipo_logits = self.actor_tipo(global_h)
-        destino_logits = self.actor_destino(h)
+        destino_logits = self.actor_destino(global_h)
         
         # Máscaras
         if self.mascara and mascara_acciones is not None:

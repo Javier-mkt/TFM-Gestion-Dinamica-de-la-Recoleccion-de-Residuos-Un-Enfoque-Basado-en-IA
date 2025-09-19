@@ -14,7 +14,7 @@ import osmnx as ox
 
 class RecogidaBasurasEnv(gym.Env):
 
-    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 2500, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
+    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 800, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
         super().__init__()
         self.nodos_indice = nodos_indice
         self.aristas_indice = aristas_indice
@@ -121,6 +121,11 @@ class RecogidaBasurasEnv(gym.Env):
 
         if tipo == 1:
             recompensa += self._recogida_basura()
+            #print(f"[DEBUG env] Intentando recoger en nodo={self.nodo_actual}, "
+            #      f"contenedor={self.nodos_indice[self.nodo_actual]['contenedor']}, "
+            #      f"llenado={self.nodos_indice[self.nodo_actual]['llenado']}, "
+            #      f"capacidad_camion={self.carga_camion}, recompensa={recompensa}")
+            
         elif tipo == 0:
             if destino in self.adjacencia[self.nodo_actual]:
                 # Cambio de nodo del camion
@@ -130,6 +135,9 @@ class RecogidaBasurasEnv(gym.Env):
                 self.nodos_indice[self.nodo_actual]["posicion_camion"] = 1
 
                 recompensa += self._recorrido_camion()
+                #print(f"[DEBUG env] Moviendose a nuevo nodo: "
+                #  f"nodo anterior={self.nodos_indice[self.nodo_anterior]['indice']}, "
+                #  f"destino={self.nodos_indice[self.nodo_actual]['indice']}, ")
             else:
                 recompensa += -1
         else: 
@@ -177,7 +185,7 @@ class RecogidaBasurasEnv(gym.Env):
             self.tiempo_total += 30 #sec, tiempo aprox recogida (cambiarlo a variable)
 
             # Recompensas 
-            recompensa = (basura_disponible / nodo["capacidad_contenedor"]) * 2  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
+            recompensa = (basura_disponible / nodo["capacidad_contenedor"]) * 10  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
             return recompensa
         
         elif nodo["contenedor"] == 1 and nodo["llenado"] == 0:
@@ -192,8 +200,16 @@ class RecogidaBasurasEnv(gym.Env):
     def _recorrido_camion(self):
         recompensa = 0
 
-        # Recompensas por tiempo recorrido y distancia recorrida
+        alpha = 0.001
+        beta = 0.001
 
+        for _, arista in self.aristas_indice.items():
+            if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
+                distancia = arista.get("distancia", 1000)  
+                tiempo = arista.get("tiempo_recorrido", 1000)
+                break
+        
+        recompensa += -alpha*distancia - beta*tiempo
         return recompensa
 
 
@@ -201,7 +217,7 @@ class RecogidaBasurasEnv(gym.Env):
     def _recompensa_final(self):
         recompensa = 0
 
-        # Añadir recompensas y penalizaciones
+        
 
         return recompensa
     
@@ -220,7 +236,7 @@ class RecogidaBasurasEnv(gym.Env):
 
 
     def _mascara_acciones(self):
-        mascara_tipo = np.array([True, True], dtype=bool)  
+        mascara_tipo = np.array([True, True], dtype=bool)    # [moverse, recoger]
         mascara_destino = np.zeros(len(self.nodos_indice), dtype=bool)
 
         adjacentes = self._nodos_adjacentes()[self.nodo_actual]
@@ -238,7 +254,7 @@ class RecogidaBasurasEnv(gym.Env):
 
         nodo = self.nodos_indice[self.nodo_actual]
         if not (nodo["contenedor"] == 1 and nodo["llenado"] > 0):
-            mascara_tipo[0] = False
+            mascara_tipo[1] = False                                 # Recoger = False
 
         return {
             "mascara_tipo": mascara_tipo,
@@ -246,6 +262,12 @@ class RecogidaBasurasEnv(gym.Env):
         }
     
     
+
+
+
+
+
+
 # Función testeo del entorno
 
 def agente_aleatorio(env, max_steps=20):
@@ -262,7 +284,7 @@ def agente_aleatorio(env, max_steps=20):
         nodo_tiene_contenedor = obs["simple"]["contenedor"] == 1
         lleno_contenedor = obs["simple"]["llenado_contenedor"] > 0
 
-        if info["mascara"]["mascara_tipo"][0]:
+        if info["mascara"]["mascara_tipo"][1]:
             # 100% probabilidad de recoger, 0% de moverse
             contenedores_visitados += 1
             if random.random() <= 1.0:
