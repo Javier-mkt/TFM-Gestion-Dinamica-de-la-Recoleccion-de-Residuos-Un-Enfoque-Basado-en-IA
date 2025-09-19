@@ -18,23 +18,20 @@ from torch.distributions import Categorical
 
 ### Global variables
 
-MODEL_PATH = 'recogida_basuras_a3c.pth'
-ENV_NAME = "RecogidaBasurasEnv"  # solo a modo informativo
+MODEL_PATH = 'recogida_basuras_a3c.pth'   # Ruta de fichero de pesos (modificar de abajo)
 SEED = 22
 NUM_PROCESSES = 1                 # ≥2 para A3C real (1 test + 1 train). Si pones 1, entreno en foreground.
-EPISODES_TRAINING = 50
-EPISODES_TESTING = 10
+EPISODES_TRAINING = 250
+EPISODES_TESTING = 20
 VALUE_LOSS_COEF = 0.5
-ENTROPY_BETA = 0.01               # bonus de entropía para explorar mejor (opcional)
+ENTROPY_BETA = 0.012              # bonus de entropía para explorar mejor (opcional)
 GAMMA = 0.99
 LR = 2.5e-4
 
 TRAINING_PARAMETERS = {
-    'trajectory_steps': 10000,
+    'trajectory_steps': 680,
     'num_processes': NUM_PROCESSES
 }
-
-### Define model architecture
 
 from modelo_gnn_final import ActorCriticGNN, EncoderGNN, tensorizacion_grafo
 from env_basuras_final import RecogidaBasurasEnv
@@ -74,13 +71,6 @@ def apply_mask_to_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tens
     logits = logits.masked_fill(invalid, float("-inf"))
     return logits
 
-# Transfiere gradientes del modelo local al global (sin return prematuro)
-def ensure_shared_grads(model, shared_model):
-    for param, shared_param in zip(model.parameters(), shared_model.parameters()):
-        if shared_param.grad is not None:
-            pass
-        shared_param._grad = param.grad
-
 # Selección de acción (una decisión para 'tipo' y otra para 'destino')
 def select_action(model, obs, info, device="cpu"):
     # Preparar entrada
@@ -95,7 +85,6 @@ def select_action(model, obs, info, device="cpu"):
     
     #print(f"[DEBUG select_action] x.shape={x.shape}, edge_index.shape={edge_index.shape}, edge_attr.shape={edge_attr.shape}")
     #print(f"[DEBUG select_action] mask_tipo sum={mask_tipo.sum().item()}, mask_dest sum={mask_dest.sum().item()}")
-
 
     # Forward
     tipo_logits, destino_logits, value = model(x, edge_index, edge_attr, batch, mascara_acciones=mascara)
@@ -124,6 +113,16 @@ def select_action(model, obs, info, device="cpu"):
     action = {"tipo": int(tipo_a.item()), "destino": int(dest_a.item())}
 
     return action, logprob, value.squeeze(-1), entropy
+
+
+
+# Transfiere gradientes del modelo local al global (sin return prematuro)
+def ensure_shared_grads(model, shared_model):
+    for param, shared_param in zip(model.parameters(), shared_model.parameters()):
+        if shared_param.grad is not None:
+            pass
+        shared_param._grad = param.grad
+
 
 ### Funciones para el entrenamiento de un agente mediante A3C
 
@@ -239,8 +238,8 @@ def train(rank, episodes, training_params, shared_model, counter, lock,
     logs_path = os.path.join(models_path, "logs")
     os.makedirs(logs_path, exist_ok=True)
 
-    np.save(os.path.join(logs_path, f"losses_rank{rank}.npy"), episodic_losses)
-    np.save(os.path.join(logs_path, f"rewards_rank{rank}.npy"), episodic_rewards)
+    np.save(os.path.join(logs_path, f"losses_rank{rank}.csv"), episodic_losses)   # Guardar en verdadero formato csv
+    np.save(os.path.join(logs_path, f"rewards_rank{rank}.csv"), episodic_rewards)
 
     print(f"[DEBUG train] Guardadas curvas de entrenamiento en {logs_path}")
     if models_path and rank == 0:

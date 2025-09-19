@@ -159,7 +159,7 @@ class RecogidaBasurasEnv(gym.Env):
 
         # Recompensa final
         if terminado or truncado:
-            recompensa += self._recompensa_final()
+            recompensa += self._recompensa_final(terminado, truncado)
 
         obs = self._obtener_observacion()
         info = {"mascara": self._mascara_acciones()} if self.mascara else {}
@@ -185,7 +185,7 @@ class RecogidaBasurasEnv(gym.Env):
             self.tiempo_total += 30 #sec, tiempo aprox recogida (cambiarlo a variable)
 
             # Recompensas 
-            recompensa = (basura_disponible / nodo["capacidad_contenedor"]) * 10  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
+            recompensa = (basura_disponible / nodo["capacidad_contenedor"]) * 2  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
             return recompensa
         
         elif nodo["contenedor"] == 1 and nodo["llenado"] == 0:
@@ -200,8 +200,8 @@ class RecogidaBasurasEnv(gym.Env):
     def _recorrido_camion(self):
         recompensa = 0
 
-        alpha = 0.001
-        beta = 0.001
+        alpha = 0.0001   # factor distancia
+        beta = 0.0002     # factor tiempo
 
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
@@ -213,11 +213,20 @@ class RecogidaBasurasEnv(gym.Env):
         return recompensa
 
 
-
-    def _recompensa_final(self):
+    def _recompensa_final(self, terminado, truncado):
         recompensa = 0
 
+        # Recompensa si vuelve a nodo inicial
+        if self.nodo_actual == self.nodo_inicial:
+            recompensa += 3
+
+        # Penalización si no acaba en nodo inicial
+        if truncado:
+            recompensa -= 2
         
+        # Recompensa por ratio de basura recogida 
+        ratio_recogida = self.carga_camion / self.capacidad_camion
+        recompensa += ratio_recogida*20
 
         return recompensa
     
