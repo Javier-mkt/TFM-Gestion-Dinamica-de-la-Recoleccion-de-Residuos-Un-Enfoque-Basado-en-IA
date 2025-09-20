@@ -21,7 +21,7 @@ from torch.distributions import Categorical
 MODEL_PATH = 'recogida_basuras_a3c.pth'   # Ruta de fichero de pesos (modificar de abajo)
 SEED = 22
 NUM_PROCESSES = 1                 # ≥2 para A3C real (1 test + 1 train). Si pones 1, entreno en foreground.
-EPISODES_TRAINING = 250
+EPISODES_TRAINING = 700
 EPISODES_TESTING = 20
 VALUE_LOSS_COEF = 0.5
 ENTROPY_BETA = 0.012              # bonus de entropía para explorar mejor (opcional)
@@ -227,7 +227,7 @@ def train(rank, episodes, training_params, shared_model, counter, lock,
         print(f"[DEBUG train] rank={rank}, episodio {ep+1}/{episodes} completado | loss={loss.item():.4f} | steps={steps} | recompensa = {ep_reward}")
 
         # === Guardar modelo cada X episodios (ej. cada 10) ===
-        if models_path and rank == 0 and (ep + 1) % 20 == 0:
+        if models_path and rank == 0 and (ep + 1) % 70 == 0:
             models_path = os.path.abspath("models")
             os.makedirs(models_path, exist_ok=True)
 

@@ -228,6 +228,18 @@ class RecogidaBasurasEnv(gym.Env):
         ratio_recogida = self.carga_camion / self.capacidad_camion
         recompensa += ratio_recogida*20
 
+        # Penalizacion por dejar contenedores sin recoger:
+        count_contenedores_total = 0
+        count_contenedores_llenos = 0
+
+        for indice, nodo in self.nodos_indice.items():
+            if nodo["contenedor"] == 1:
+                count_contenedores_total += 1
+            if nodo["contenedor"] == 1 and nodo["llenado"] > 0:
+                count_contenedores_llenos += 1
+        
+        recompensa += (count_contenedores_total - 2 * count_contenedores_llenos) * 0.2 
+    
         return recompensa
     
 
