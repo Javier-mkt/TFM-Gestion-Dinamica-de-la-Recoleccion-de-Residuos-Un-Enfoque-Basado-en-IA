@@ -14,7 +14,7 @@ import osmnx as ox
 
 class RecogidaBasurasEnv(gym.Env):
 
-    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 800, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
+    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 1000, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
         super().__init__()
         self.nodos_indice = nodos_indice
         self.aristas_indice = aristas_indice
@@ -186,6 +186,17 @@ class RecogidaBasurasEnv(gym.Env):
 
             # Recompensas 
             recompensa = (basura_disponible / nodo["capacidad_contenedor"]) * 2  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
+            
+            count_contenedores_total = 0
+            count_contenedores_llenos = 0
+            for indice, nodo in self.nodos_indice.items():
+                if nodo["contenedor"] == 1:
+                    count_contenedores_total += 1
+                if nodo["contenedor"] == 1 and nodo["llenado"] > 0:
+                    count_contenedores_llenos += 1
+        
+            recompensa += ((count_contenedores_total - count_contenedores_llenos) / count_contenedores_total) * 1
+            
             return recompensa
         
         elif nodo["contenedor"] == 1 and nodo["llenado"] == 0:
@@ -200,8 +211,8 @@ class RecogidaBasurasEnv(gym.Env):
     def _recorrido_camion(self):
         recompensa = 0
 
-        alpha = 0.0001   # factor distancia
-        beta = 0.0002     # factor tiempo
+        alpha = 0.000005   # factor distancia # Deshabilitado temporal
+        beta = 0.00005     # factor tiempo  # Deshabilitado temporal
 
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
@@ -218,15 +229,15 @@ class RecogidaBasurasEnv(gym.Env):
 
         # Recompensa si vuelve a nodo inicial
         if self.nodo_actual == self.nodo_inicial:
-            recompensa += 3
+            recompensa += 0                           # Deshabilitado temporal
 
         # Penalización si no acaba en nodo inicial
         if truncado:
-            recompensa -= 2
+            recompensa -= 0
         
         # Recompensa por ratio de basura recogida 
         ratio_recogida = self.carga_camion / self.capacidad_camion
-        recompensa += ratio_recogida*20
+        recompensa += ratio_recogida*0                # Deshabilitado temporal
 
         # Penalizacion por dejar contenedores sin recoger:
         count_contenedores_total = 0
@@ -238,7 +249,7 @@ class RecogidaBasurasEnv(gym.Env):
             if nodo["contenedor"] == 1 and nodo["llenado"] > 0:
                 count_contenedores_llenos += 1
         
-        recompensa += (count_contenedores_total - 2 * count_contenedores_llenos) * 0.2 
+        recompensa += (count_contenedores_total - count_contenedores_llenos) * 0   # Deshabilitado temporal
     
         return recompensa
     
