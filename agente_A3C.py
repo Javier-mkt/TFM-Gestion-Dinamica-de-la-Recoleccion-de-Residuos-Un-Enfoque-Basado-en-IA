@@ -24,7 +24,7 @@ NUM_PROCESSES = 1                 # ≥2 para A3C real (1 test + 1 train). Si po
 EPISODES_TRAINING = 1100
 EPISODES_TESTING = 20             # Habilitar?
 VALUE_LOSS_COEF = 0.5
-ENTROPY_BETA = 0.018              # bonus de entropía para explorar mejor (opcional)
+ENTROPY_BETA = 0.1              # bonus de entropía para explorar mejor (opcional)
 GAMMA = 0.99
 LR = 2.5e-4
 
@@ -119,8 +119,11 @@ def select_action(model, obs, info, device="cpu"):
 # Transfiere gradientes del modelo local al global (sin return prematuro)
 def ensure_shared_grads(model, shared_model):
     for param, shared_param in zip(model.parameters(), shared_model.parameters()):
+        if param.grad is None:
+            continue
         if shared_param.grad is not None:
-            pass
+            shared_param.grad.zero_()
+        # Copia el gradiente del modelo local al compartido
         shared_param._grad = param.grad
 
 
