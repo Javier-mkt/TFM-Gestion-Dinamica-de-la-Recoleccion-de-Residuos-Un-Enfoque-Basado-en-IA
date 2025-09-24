@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import NNConv, global_mean_pool
+from torch_geometric.nn import NNConv, GINEConv, global_mean_pool
 
 # Se prepara los datos del grafo para introducirlos a la GNN
 
@@ -41,37 +41,31 @@ def tensorizacion_grafo(obs):
 
 
 class EncoderGNN(nn.Module):
-    def __init__(self, in_node_features, in_edge_features, hidden_dim, num_layers = 3):
+    """
+    Encoder GNN con GINEConv (edge_dim=in_edge_features).
+    Mantiene edge_attr con coste ~O(E·hidden), sin la explosión de NNConv.
+    """
+    def __init__(self, in_node_features: int, in_edge_features: int, hidden_dim: int, num_layers: int = 3):
         super().__init__()
-
         self.layers = nn.ModuleList()
 
-        # Primera capa
-        nn_edge_in = nn.Sequential(
-            nn.Linear(in_edge_features, hidden_dim),
+        # Capa 1: F_in -> H
+        mlp1 = nn.Sequential(
+            nn.Linear(in_node_features, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, in_node_features * hidden_dim)
+            nn.Linear(hidden_dim, hidden_dim),
         )
-        self.layers.append(NNConv(in_node_features, hidden_dim, nn_edge_in, aggr = "mean"))
+        self.layers.append(GINEConv(mlp1, edge_dim=in_edge_features))
 
-        # Capas intermedias
-        for _ in range(num_layers - 2):
-            nn_edge_mid = nn.Sequential(
-                nn.Linear(in_edge_features, hidden_dim),
+        # Capas siguientes: H -> H
+        for _ in range(num_layers - 1):
+            mlp_h = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim, hidden_dim * hidden_dim)
+                nn.Linear(hidden_dim, hidden_dim),
             )
-            self.layers.append(NNConv(hidden_dim, hidden_dim, nn_edge_mid, aggr = "mean"))
+            self.layers.append(GINEConv(mlp_h, edge_dim=in_edge_features))
 
-        # Última capa
-        nn_edge_out = nn.Sequential(
-            nn.Linear(in_edge_features, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim * hidden_dim)
-        )
-        self.layers.append(NNConv(hidden_dim, hidden_dim, nn_edge_out, aggr = "mean"))
-
-    
     def forward(self, x, edge_index, edge_attr):
         h = x
         for conv in self.layers:
