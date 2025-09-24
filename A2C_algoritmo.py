@@ -12,6 +12,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import configure
 from sb3_policy_mascara import A2CPolicyGNNMasked
 from env_basuras_final import RecogidaBasurasEnv
+from wrapper.exploracion_A2C import DecaimientoEntropiaCallback, RecompensIntrinseca
 
 
 # ---------------------------
@@ -78,7 +79,7 @@ class FolderCheckpointCallback(BaseCallback):
 # ---------------------------
 # Factories de entorno 
 # ---------------------------
-def make_env_thunk(nodos_indice, aristas_indice, seed=22, steps_maximo=1200, mascara=True,
+def make_env_thunk(nodos_indice, aristas_indice, seed=22, steps_maximo=1200, mascara=True, beta_int = 0,
                    rank=0, monitor_dir="./logs/monitor"):
     def _fn():
         e = RecogidaBasurasEnv(
@@ -88,9 +89,14 @@ def make_env_thunk(nodos_indice, aristas_indice, seed=22, steps_maximo=1200, mas
             mascara=mascara,
             seed=seed,
         )
+
+        if beta_int > 0:
+            e = RecompensIntrinseca(e, beta = beta_int)
+        
         os.makedirs(monitor_dir, exist_ok=True)
         filename = os.path.join(monitor_dir, f"monitor_{rank}.csv")
         return Monitor(e, filename=filename)  # ← guarda episodios a CSV
+    
     return _fn
 
 
@@ -107,18 +113,20 @@ def _ensure_spawn():
 # ---------------------------
 def train_a2c(nodos_indice,
               aristas_indice,
-              total_timesteps=1_200_000,
-              n_envs=4,
-              n_steps=16,
-              learning_rate=3e-4,
-              ent_coef=0.05,
-              gamma=0.985,
-              seed=22,
-              device="cuda",
-              run_name="run_default",
-              models_dir="./models/a2c",
-              tb_dir="./logs/tb-a2c",
-              save_freq=100_000):
+              total_timesteps = 1_200_000,
+              n_envs = 4,
+              n_steps = 16,
+              learning_rate = 3e-4,
+              ent_coef_inicial = 0.08,
+              ent_coef_final = 0.03,
+              gamma = 0.985,
+              beta_int = 0.0,
+              seed = 22,
+              device = "cuda",
+              run_name = "run_default",
+              models_dir = "./models/a2c",
+              tb_dir = "./logs/tb-a2c",
+              save_freq = 100_000):
     """
     - Multiprocessing: SubprocVecEnv (fallback a DummyVecEnv si hiciera falta)
     - Checkpoints en carpetas cada `save_freq` (por defecto, 100k)
@@ -133,31 +141,26 @@ def train_a2c(nodos_indice,
     # VecEnv paralelo como en tu idea
     monitor_dir = os.path.join(tb_dir, run_name, "monitor")  # ← carpeta específica del run
 
+    thunks = []
+    for i in range(n_envs):
+        thunks.append(
+            make_env_thunk(nodos_indice, aristas_indice,
+                           seed=seed+i, steps_maximo=1200, mascara=True,
+                           beta_int=beta_int,
+                           monitor_dir=os.path.join(tb_dir, run_name, "monitor"),
+                           rank=i)
+        )
+
     try:
-        thunks = [
-            make_env_thunk(
-                nodos_indice, aristas_indice,
-                seed=seed+i,
-                rank=i,                      # ← rank único por subproceso
-                monitor_dir=monitor_dir
-            )
-            for i in range(n_envs)
-        ]
-        vec_env = SubprocVecEnv(thunks)      # paralelismo real
+        vec_env = SubprocVecEnv(thunks)
         used_vec = "SubprocVecEnv"
-    except Exception as e:
-        print(f"[AVISO] SubprocVecEnv falló ({e}). Fallback a DummyVecEnv (sin paralelismo).")
-        thunks = [make_env_thunk(
-            nodos_indice, aristas_indice,
-            seed=seed,
-            rank=0,
-            monitor_dir=monitor_dir
-        )]
-        vec_env = DummyVecEnv(thunks)
+    except Exception:
+        vec_env = DummyVecEnv([thunks[0]])
         used_vec = "DummyVecEnv"
 
     vec_env = VecMonitor(vec_env)
     print(f"[INFO] VecEnv usado: {used_vec} | n_envs={vec_env.num_envs}")
+
 
     # policy_kwargs fijos
     n_nodes = len(nodos_indice)
@@ -169,21 +172,21 @@ def train_a2c(nodos_indice,
     
     # Modelo A2C
     model = A2C(
-        policy=A2CPolicyGNNMasked,
-        env=vec_env,
-        learning_rate=learning_rate,
-        n_steps=n_steps,
-        gamma=gamma,
-        gae_lambda=1.0,
-        ent_coef=ent_coef,
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        normalize_advantage=True,
-        policy_kwargs=policy_kwargs,
-        seed=seed,
-        verbose=1,
-        device=device,
-        tensorboard_log=tb_dir,
+        policy = A2CPolicyGNNMasked,
+        env = vec_env,
+        learning_rate = learning_rate,
+        n_steps = n_steps,
+        gamma = gamma,
+        gae_lambda = 1.0,
+        ent_coef = ent_coef_inicial,
+        vf_coef = 0.5,
+        max_grad_norm = 0.5,
+        normalize_advantage = True,
+        policy_kwargs = policy_kwargs,
+        seed = seed,
+        verbose = 1,
+        device = device,
+        tensorboard_log = tb_dir,
     )
 
 
@@ -206,11 +209,15 @@ def train_a2c(nodos_indice,
         verbose=1,
     )
 
+    # Decaimiento de entropía
+    ent_decay = DecaimientoEntropiaCallback(inicio = ent_coef_inicial, final = ent_coef_final, total_steps = total_timesteps, verbose = 0)
+
+
     # Entrenamiento (desde cero; no arrastra pesos)
     model.learn(
         total_timesteps=total_timesteps,
         reset_num_timesteps=True,
-        callback=[folder_ckpt],
+        callback=[folder_ckpt, ent_decay],
         tb_log_name=run_name,
     )
 
