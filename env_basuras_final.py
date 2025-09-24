@@ -288,8 +288,8 @@ class RecogidaBasurasEnv(gym.Env):
     def _recorrido_camion(self):
         recompensa = 0
 
-        alpha = 0.0002   # factor distancia # Deshabilitado temporal
-        beta = 0.002    # factor tiempo  # Deshabilitado temporal
+        alpha = 0.0001   # factor distancia # Deshabilitado temporal
+        beta = 0.001    # factor tiempo  # Deshabilitado temporal
 
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
