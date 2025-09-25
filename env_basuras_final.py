@@ -45,12 +45,17 @@ class RecogidaBasurasEnv(gym.Env):
         self.nodo_inicial = 103 # Entrada pueblo.
         self.nodo_actual = self.nodo_inicial
         self.nodo_anterior = None
+        self.nodo_actual_recogido = False
 
         self.adjacencia = self._nodos_adjacentes()  
+
+        # Recompensa extrínseca visita nuevos nodos
+        self.nodos_visitados_ep = set()
 
         self.seed_value = seed
         if seed is not None:
             self.set_seed(seed)
+
 
         # Espacio de acciones 
         self.action_space = spaces.MultiDiscrete([2, self.num_nodos])  #tipo (0 -> mover, 1 -> recoger), destino
@@ -130,7 +135,7 @@ class RecogidaBasurasEnv(gym.Env):
 
         # Mascara tipo [mover, recoger] (1)(0 no recoger, 1 sí recoger)
         nodo = self.nodos_indice[self.nodo_actual]
-        recoger = (nodo["contenedor"] == 1 and nodo["llenado"] > 0)
+        recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)
         mascara_tipo = np.array([1, 1 if recoger else 0], dtype = np.int8)
         
         # Mask2_table
@@ -178,6 +183,10 @@ class RecogidaBasurasEnv(gym.Env):
         self.carga_camion = 0.0
         self.steps = 0
         self.tiempo_total = 0
+        self.nodos_visitados_ep.clear()
+        self.nodos_visitados_ep.add(self.nodo_inicial)
+        self.nodo_anterior = None
+        self.nodo_actual_recogido = False
 
         # Reinicio de los nodos: rellenado de contenedores e incialización posicion inicial camión 
         for indice, nodo in self.nodos_indice.items():
@@ -202,7 +211,9 @@ class RecogidaBasurasEnv(gym.Env):
         destino = int(action[1])
 
         if tipo == 1:
+            self.nodo_actual_recogido = True
             recompensa += self._recogida_basura()
+            
             
         elif tipo == 0:
             if destino in self.adjacencia[self.nodo_actual]:
@@ -211,6 +222,8 @@ class RecogidaBasurasEnv(gym.Env):
                 self.nodos_indice[self.nodo_actual]["posicion_camion"] = 0
                 self.nodo_actual = destino
                 self.nodos_indice[self.nodo_actual]["posicion_camion"] = 1
+
+                self.nodo_actual_recogido = False
 
                 recompensa += self._recorrido_camion()
 
@@ -271,12 +284,12 @@ class RecogidaBasurasEnv(gym.Env):
                 if nodo["contenedor"] == 1 and nodo["llenado"] > 0:
                     count_contenedores_llenos += 1
         
-            recompensa += ((count_contenedores_total - count_contenedores_llenos) / count_contenedores_total) * 1
+            recompensa += ((count_contenedores_total - count_contenedores_llenos) / count_contenedores_total) * 4
             
             return recompensa
         
         elif nodo["contenedor"] == 1 and nodo["llenado"] == 0:
-            recompensa = 0
+            recompensa = -0.5
             return recompensa
 
         else:
@@ -288,16 +301,25 @@ class RecogidaBasurasEnv(gym.Env):
     def _recorrido_camion(self):
         recompensa = 0
 
-        alpha = 0.0001   # factor distancia # Deshabilitado temporal
-        beta = 0.001    # factor tiempo  # Deshabilitado temporal
+        alpha = 0.0005   # factor distancia # Deshabilitado temporal
+        beta = 0.005    # factor tiempo  # Deshabilitado temporal
 
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
-                distancia = arista.get("distancia", 1000)  
-                tiempo = arista.get("tiempo_recorrido", 1000)
+                distancia = arista.get("distancia", 1000.0)  
+                tiempo = arista.get("tiempo_recorrido", 1000.0)
                 break
         
         recompensa += -alpha*distancia - beta*tiempo
+
+        recompensa_nuevo_nodo = 0.5
+
+        # Recompensa por visitar el nodo por primera vez (extrínseco)
+
+        if self.nodo_actual not in self.nodos_visitados_ep:
+            recompensa += recompensa_nuevo_nodo
+            self.nodos_visitados_ep.add(self.nodo_actual)
+
         return recompensa
 
 
@@ -307,15 +329,15 @@ class RecogidaBasurasEnv(gym.Env):
 
         # Recompensa si vuelve a nodo inicial
         if self.nodo_actual == self.nodo_inicial:
-            recompensa += 0                           # Deshabilitado temporal
+            recompensa += 1                         # Deshabilitado temporal
 
         # Penalización si no acaba en nodo inicial
         if truncado:
-            recompensa -= 0
+            recompensa -= 1
         
         # Recompensa por ratio de basura recogida 
         ratio_recogida = self.carga_camion / self.capacidad_camion
-        recompensa += ratio_recogida*0                # Deshabilitado temporal
+        recompensa += ratio_recogida*4                # Deshabilitado temporal
 
         # Penalizacion por dejar contenedores sin recoger:
         count_contenedores_total = 0
@@ -327,7 +349,7 @@ class RecogidaBasurasEnv(gym.Env):
             if nodo["contenedor"] == 1 and nodo["llenado"] > 0:
                 count_contenedores_llenos += 1
         
-        recompensa += (count_contenedores_total - count_contenedores_llenos) * 0   # Deshabilitado temporal
+        recompensa += (count_contenedores_total - count_contenedores_llenos)    # Deshabilitado temporal
     
         return recompensa
     
