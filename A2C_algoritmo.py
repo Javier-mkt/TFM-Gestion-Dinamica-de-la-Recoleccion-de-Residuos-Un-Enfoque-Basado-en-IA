@@ -4,6 +4,8 @@ import json
 import time
 import multiprocessing as mp
 from typing import Optional, Dict, Any
+from functools import partial
+
 
 from stable_baselines3 import A2C
 from stable_baselines3.common.monitor import Monitor
@@ -12,7 +14,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import configure
 from sb3_policy_mascara import A2CPolicyGNNMasked
 from env_basuras_final import RecogidaBasurasEnv
-from wrapper.exploracion_A2C import DecaimientoEntropiaCallback, RecompensIntrinseca
+from wrapper.exploracion_A2C import DecaimientoEntropiaCallback, RecompensIntrinsecaGlobal
 
 
 # ---------------------------
@@ -70,7 +72,7 @@ class FolderCheckpointCallback(BaseCallback):
         if t - self.last_saved >= self.save_freq:
             self.last_saved = t
             step_dir = os.path.join(self.models_dir, self.run_name, f"step_{t}")
-            _save_model_to_folder(self.model, step_dir, meta={"checkpoint_step": t})
+            _save_model_to_folder(self.model, step_dir, meta = {"checkpoint_step": t})
             if self.verbose:
                 print(f"[CHKPT] Guardado checkpoint en {step_dir}")
         return True
@@ -79,19 +81,24 @@ class FolderCheckpointCallback(BaseCallback):
 # ---------------------------
 # Factories de entorno 
 # ---------------------------
-def make_env_thunk(nodos_indice, aristas_indice, seed=22, steps_maximo=1200, mascara=True, beta_int = 0,
-                   rank=0, monitor_dir="./logs/monitor"):
+def make_env_thunk(nodos_indice, aristas_indice, seed = 22, steps_maximo = 1200, mascara = True, beta_int = 0, alpha = 0.995,
+                   rank = 0, monitor_dir = "./logs/monitor", shared_counts = None, shared_last_ep = None, shared_global_ep = None):
     def _fn():
         e = RecogidaBasurasEnv(
-            nodos_indice=nodos_indice,
-            aristas_indice=aristas_indice,
-            steps_maximo=steps_maximo,
-            mascara=mascara,
-            seed=seed,
+            nodos_indice = nodos_indice,
+            aristas_indice = aristas_indice,
+            steps_maximo = steps_maximo,
+            mascara = mascara,
+            seed = seed,
         )
 
         if beta_int > 0:
-            e = RecompensIntrinseca(e, beta = beta_int)
+            e = RecompensIntrinsecaGlobal(
+                e, beta = beta_int, alpha = alpha,
+                shared_counts = shared_counts,
+                shared_last_ep = shared_last_ep,
+                shared_global_ep = shared_global_ep,
+            )
         
         os.makedirs(monitor_dir, exist_ok=True)
         filename = os.path.join(monitor_dir, f"monitor_{rank}.csv")
@@ -121,6 +128,7 @@ def train_a2c(nodos_indice,
               ent_coef_final = 0.03,
               gamma = 0.985,
               beta_int = 0.0,
+              alpha = 0.995,
               seed = 22,
               device = "cuda",
               run_name = "run_default",
@@ -138,6 +146,12 @@ def train_a2c(nodos_indice,
     _ensure_dir(os.path.join(models_dir, run_name))
     _ensure_spawn()
 
+    manager = mp.Manager()
+    shared_counts = manager.dict()     # dict: nodo_id -> float (conteo con decaimiento)
+    shared_last_ep = manager.dict()    # dict: nodo_id -> int   (último episodio en que se tocó)
+    shared_global_ep = manager.Value('i', 0)  # episodio global (entero)
+    alpha = 0.995                        # decaimiento por episodio (ajústalo a tu gusto)
+
     # VecEnv paralelo como en tu idea
     monitor_dir = os.path.join(tb_dir, run_name, "monitor")  # ← carpeta específica del run
 
@@ -145,10 +159,11 @@ def train_a2c(nodos_indice,
     for i in range(n_envs):
         thunks.append(
             make_env_thunk(nodos_indice, aristas_indice,
-                           seed=seed+i, steps_maximo=1200, mascara=True,
-                           beta_int=beta_int,
-                           monitor_dir=os.path.join(tb_dir, run_name, "monitor"),
-                           rank=i)
+                           seed = seed + i, steps_maximo = 1200, mascara = True,
+                           beta_int = beta_int, alpha = alpha,
+                           monitor_dir = os.path.join(tb_dir, run_name, "monitor"),
+                           rank = i, shared_counts = shared_counts, shared_last_ep = shared_last_ep,
+                           shared_global_ep = shared_global_ep)
         )
 
     try:
