@@ -203,7 +203,7 @@ def train_a2c(nodos_indice,
         gamma = gamma,
         gae_lambda = 1.0,
         ent_coef = ent_coef_inicial,
-        vf_coef = 0.5,
+        vf_coef = 0.5,   # Valor inicial y 
         max_grad_norm = 0.5,
         normalize_advantage = True,
         policy_kwargs = policy_kwargs,
@@ -243,7 +243,7 @@ def train_a2c(nodos_indice,
         reset_num_timesteps = True,
         callback = [folder_ckpt, ent_decay],
         tb_log_name = run_name,
-        log_interval = 30
+        log_interval = 15
     )
 
     # Guardado final a carpeta
