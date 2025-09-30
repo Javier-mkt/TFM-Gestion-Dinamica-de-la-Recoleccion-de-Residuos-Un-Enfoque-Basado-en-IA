@@ -15,7 +15,7 @@ from collections import defaultdict
 
 class RecogidaBasurasEnv(gym.Env):
 
-    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 800, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
+    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 600, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
         super().__init__()
         self.nodos_indice = nodos_indice
         self.aristas_indice = aristas_indice
@@ -283,8 +283,8 @@ class RecogidaBasurasEnv(gym.Env):
     def _recorrido_camion(self):
         recompensa = 0
 
-        alpha = 0.00025   # factor distancia # Deshabilitado temporal 0.0005--0.0001
-        beta = 0.0025   # factor tiempo  # Deshabilitado temporal 0.005-0.001
+        alpha = 0.0005   # factor distancia # Deshabilitado temporal 0.0005--0.0001
+        beta = 0.005   # factor tiempo  # Deshabilitado temporal 0.005-0.001
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
                 distancia = arista.get("distancia", 1000.0)  

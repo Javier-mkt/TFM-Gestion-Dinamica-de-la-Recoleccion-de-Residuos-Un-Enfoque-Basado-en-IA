@@ -84,7 +84,7 @@ class FolderCheckpointCallback(BaseCallback):
 # ---------------------------
 # Factories de entorno 
 # ---------------------------
-def make_env_thunk(nodos_indice, aristas_indice, seed = 22, steps_maximo = 800, mascara = True, beta_int = 0, alpha = 0.995,
+def make_env_thunk(nodos_indice, aristas_indice, seed = 22, steps_maximo = 600, mascara = True, beta_int = 0, alpha = 0.995,
                    rank = 0, monitor_dir = "./logs/monitor", shared_counts = None, shared_last_ep = None, shared_global_ep = None):
     def _fn():
         e = RecogidaBasurasEnv(
@@ -117,6 +117,11 @@ def _ensure_spawn():
     except RuntimeError:
         pass
 
+ # Decrecimiento linear del learning rate
+def lr_lineal(lr_inicio, lr_final):
+    def _lr(progress_remaining: float) -> float:
+        return lr_final + (lr_inicio - lr_final) * progress_remaining
+    return _lr
 
 # ---------------------------
 # Entrenamiento principal
@@ -126,10 +131,13 @@ def train_a2c(nodos_indice,
               total_timesteps = 1_200_000,
               n_envs = 4,
               n_steps = 16,
-              learning_rate = 3e-4,
+              learning_rate =  2e-4,
               ent_coef_inicial = 0.08,
               ent_coef_final = 0.03,
               gamma = 0.985,
+              gae_lambda = 1.0, 
+              vf_coef = 0.5,
+              max_grad_norm = 0.5,
               beta_int = 0.0,
               alpha = 0.995,
               seed = 22,
@@ -162,7 +170,7 @@ def train_a2c(nodos_indice,
     for i in range(n_envs):
         thunks.append(
             make_env_thunk(nodos_indice, aristas_indice,
-                           seed = seed + i, steps_maximo = 800, mascara = True,
+                           seed = seed + i, steps_maximo = 600, mascara = True,
                            beta_int = beta_int, alpha = alpha,
                            monitor_dir = os.path.join(tb_dir, run_name, "monitor"),
                            rank = i, shared_counts = shared_counts, shared_last_ep = shared_last_ep,
@@ -180,7 +188,7 @@ def train_a2c(nodos_indice,
     print(f"[INFO] VecEnv usado: {used_vec} | n_envs={vec_env.num_envs}")
 
     # Normalización
-    vec_env = VecNormalize(vec_env, norm_obs = True, norm_reward = True, clip_obs = 10, clip_reward = 10, norm_obs_keys = ["x", "edge_attr"], gamma = gamma)
+    vec_env = VecNormalize(vec_env, norm_obs = True, norm_reward = True, clip_obs = 10, clip_reward = 1, norm_obs_keys = ["x", "edge_attr"], gamma = gamma)
 
     # policy_kwargs fijos
     n_nodes = len(nodos_indice)
@@ -201,10 +209,10 @@ def train_a2c(nodos_indice,
         learning_rate = learning_rate,
         n_steps = n_steps,
         gamma = gamma,
-        gae_lambda = 1.0,
+        gae_lambda = gae_lambda,              
         ent_coef = ent_coef_inicial,
-        vf_coef = 0.5,   # Valor inicial y 
-        max_grad_norm = 0.5,
+        vf_coef = vf_coef,   # Valor inicial y 
+        max_grad_norm = max_grad_norm,
         normalize_advantage = True,
         policy_kwargs = policy_kwargs,
         seed = seed,
@@ -236,14 +244,13 @@ def train_a2c(nodos_indice,
     # Decaimiento de entropía
     ent_decay = DecaimientoEntropiaCallback(inicio = ent_coef_inicial, final = ent_coef_final, total_steps = total_timesteps, verbose = 0)
 
-
     # Entrenamiento (desde cero; no arrastra pesos)
     model.learn(
         total_timesteps = total_timesteps,
         reset_num_timesteps = True,
         callback = [folder_ckpt, ent_decay],
         tb_log_name = run_name,
-        log_interval = 15
+        log_interval = 30
     )
 
     # Guardado final a carpeta
