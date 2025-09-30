@@ -1,0 +1,6 @@
+{
+  "checkpoint_step": 9750000,
+  "num_timesteps": 9750000,
+  "device": "cuda:0",
+  "saved_at": "2025-09-29 07:30:31"
+}

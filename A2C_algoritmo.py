@@ -9,7 +9,7 @@ from functools import partial
 
 from stable_baselines3 import A2C
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecMonitor
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecMonitor, VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import configure
 from sb3_policy_mascara import A2CPolicyGNNMasked
@@ -17,9 +17,7 @@ from env_basuras_final import RecogidaBasurasEnv
 from wrapper.exploracion_A2C import DecaimientoEntropiaCallback, RecompensIntrinsecaGlobal
 
 
-# ---------------------------
-# Helpers de guardado a CARPETA
-# ---------------------------
+# Guardado a carpeta
 def _ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
 
@@ -73,6 +71,11 @@ class FolderCheckpointCallback(BaseCallback):
             self.last_saved = t
             step_dir = os.path.join(self.models_dir, self.run_name, f"step_{t}")
             _save_model_to_folder(self.model, step_dir, meta = {"checkpoint_step": t})
+            vecenv = self.model.get_env()       
+                         
+            if hasattr(vecenv, "save"):
+                vecenv.save(os.path.join(step_dir, "vecnormalize.pkl"))
+
             if self.verbose:
                 print(f"[CHKPT] Guardado checkpoint en {step_dir}")
         return True
@@ -176,12 +179,18 @@ def train_a2c(nodos_indice,
     vec_env = VecMonitor(vec_env)
     print(f"[INFO] VecEnv usado: {used_vec} | n_envs={vec_env.num_envs}")
 
+    # Normalización
+    vec_env = VecNormalize(vec_env, norm_obs = True, norm_reward = True, clip_obs = 10, clip_reward = 10, norm_obs_keys = ["x", "edge_attr"], gamma = gamma)
 
     # policy_kwargs fijos
     n_nodes = len(nodos_indice)
     policy_kwargs = dict(
-        hidden_dim=128, in_node_features=5, in_edge_features=2,
-        n_tipos=2, max_nodes=n_nodes, gnn_layers=3,
+        hidden_dim = 128, 
+        in_node_features = 5, 
+        in_edge_features = 2,
+        n_tipos = 2, 
+        max_nodes = n_nodes, 
+        gnn_layers = 3,
     )
 
     
@@ -230,15 +239,19 @@ def train_a2c(nodos_indice,
 
     # Entrenamiento (desde cero; no arrastra pesos)
     model.learn(
-        total_timesteps=total_timesteps,
-        reset_num_timesteps=True,
-        callback=[folder_ckpt, ent_decay],
-        tb_log_name=run_name,
+        total_timesteps = total_timesteps,
+        reset_num_timesteps = True,
+        callback = [folder_ckpt, ent_decay],
+        tb_log_name = run_name,
+        log_interval = 30
     )
 
     # Guardado final a carpeta
     final_dir = os.path.join(models_dir, run_name, "final")
     _save_model_to_folder(model, final_dir, meta={"final": True})
+    vecnorm_path = os.path.join(final_dir, "vecnormalize.pkl")
+    vec_env.save(vecnorm_path)
+
     print(f"[OK] Modelo final guardado en carpeta: {final_dir}")
 
     return model, final_dir

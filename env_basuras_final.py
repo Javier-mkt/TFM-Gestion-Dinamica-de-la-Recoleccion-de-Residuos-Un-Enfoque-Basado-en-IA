@@ -11,20 +11,7 @@ from gymnasium import spaces
 import torch
 import networkx as nx 
 import osmnx as ox
-
-import math
-import os
-import sys
-import time
-import random
-
-import numpy as np
-import pandas as pd
-import gymnasium as gym
-from gymnasium import spaces
-import torch
-import networkx as nx 
-import osmnx as ox
+from collections import defaultdict
 
 class RecogidaBasurasEnv(gym.Env):
 
@@ -52,7 +39,7 @@ class RecogidaBasurasEnv(gym.Env):
         self.adjacencia = self._nodos_adjacentes()  
 
         # Recompensa extrínseca visita nuevos nodos
-        self.nodos_visitados_ep = set()
+        self.nodos_visitados_ep = defaultdict(int)
 
         self.seed_value = seed
         if seed is not None:
@@ -186,7 +173,7 @@ class RecogidaBasurasEnv(gym.Env):
         self.steps = 0
         self.tiempo_total = 0
         self.nodos_visitados_ep.clear()
-        self.nodos_visitados_ep.add(self.nodo_inicial)
+        self.nodos_visitados_ep[self.nodo_inicial] = 1
         self.nodo_anterior = None
         self.nodo_actual_recogido = False
 
@@ -219,6 +206,7 @@ class RecogidaBasurasEnv(gym.Env):
             
         elif tipo == 0:
             if destino in self.adjacencia[self.nodo_actual]:
+
                 # Cambio de nodo del camion
                 self.nodo_anterior = self.nodo_actual
                 self.nodos_indice[self.nodo_actual]["posicion_camion"] = 0
@@ -230,9 +218,11 @@ class RecogidaBasurasEnv(gym.Env):
                 recompensa += self._recorrido_camion()
 
             else:
-                recompensa += -1
+                print("Acción inválida, error máscara destino (destino no válido)")
+                recompensa += -0.2
         else: 
-            recompensa += -1
+            print("Acción inválida, error máscara tipo (fuera rango)")
+            recompensa += -0.2
 
         terminado = False
         truncado = False
@@ -276,26 +266,16 @@ class RecogidaBasurasEnv(gym.Env):
             self.tiempo_total += 30 #sec, tiempo aprox recogida (cambiarlo a variable)
 
             # Recompensas 
-            recompensa = (basura_disponible / nodo["capacidad_contenedor"]) * 3  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
-            
-            count_contenedores_total = 0
-            count_contenedores_llenos = 0
-            for indice, nodo in self.nodos_indice.items():
-                if nodo["contenedor"] == 1:
-                    count_contenedores_total += 1
-                if nodo["contenedor"] == 1 and nodo["llenado"] > 0.05:
-                    count_contenedores_llenos += 1
-        
-            recompensa += ((count_contenedores_total - count_contenedores_llenos) / count_contenedores_total) * 4
-            
+            recompensa += 0.6 + 0.4 * (basura_disponible / nodo["capacidad_contenedor"])  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
             return recompensa
         
         elif nodo["contenedor"] == 1:
-            recompensa = -1
+            recompensa += -0.2  #Penalización por recoger en nodo sin basura suficiente
             return recompensa
 
         else:
-            recompensa = -1
+            print("Acción inválida, error máscara tipo (acción recogida en nodo no contenedor)")
+            recompensa += -0.3
             return recompensa
 
 
@@ -303,23 +283,28 @@ class RecogidaBasurasEnv(gym.Env):
     def _recorrido_camion(self):
         recompensa = 0
 
-        alpha = 0.00005   # factor distancia # Deshabilitado temporal 0.0005--0.0001
-        beta = 0.0005   # factor tiempo  # Deshabilitado temporal 0.005-0.001
+        alpha = 0.00025   # factor distancia # Deshabilitado temporal 0.0005--0.0001
+        beta = 0.0025   # factor tiempo  # Deshabilitado temporal 0.005-0.001
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
                 distancia = arista.get("distancia", 1000.0)  
-                tiempo = arista.get("tiempo_recorrido", 1000.0)
+                tiempo = arista.get("tiempo_recorrido", 100.0)
                 break
         
         recompensa += -alpha*distancia - beta*tiempo
 
-        # Recompensa por visitar el nodo por primera vez (extrínseco)
+        # Recompensa por visitar el nodo por primera vez y penalización por => 4
 
         recompensa_nuevo_nodo = 0.1
 
-        if self.nodo_actual not in self.nodos_visitados_ep:
+        # Recompensa por primera visita
+        self.nodos_visitados_ep[self.nodo_actual] += 1
+        if self.nodos_visitados_ep[self.nodo_actual] <= 1:
             recompensa += recompensa_nuevo_nodo
-            self.nodos_visitados_ep.add(self.nodo_actual)
+
+        # Penalización por exceso de visitas
+        if self.nodos_visitados_ep[self.nodo_actual] >= 4:
+            recompensa -= recompensa_nuevo_nodo
 
         return recompensa
 
@@ -330,11 +315,11 @@ class RecogidaBasurasEnv(gym.Env):
 
         # Recompensa si vuelve a nodo inicial
         if self.nodo_actual == self.nodo_inicial:
-            recompensa += 2                        
+            recompensa += 0.1                        
 
         # Penalización si no acaba en nodo inicial
         if truncado:
-            recompensa -= 2
+            recompensa -= 0.1
         
         # Recompensa por ratio de basura recogida 
         ratio_recogida = self.carga_camion / self.capacidad_camion
@@ -347,10 +332,10 @@ class RecogidaBasurasEnv(gym.Env):
         for indice, nodo in self.nodos_indice.items():
             if nodo["contenedor"] == 1:
                 count_contenedores_total += 1
-            if nodo["contenedor"] == 1 and nodo["llenado"] > 0:
+            if nodo["contenedor"] == 1 and nodo["llenado"] > 0.05:
                 count_contenedores_llenos += 1
         
-        recompensa += (count_contenedores_total - count_contenedores_llenos)*0    
+        recompensa += (count_contenedores_total - count_contenedores_llenos)/count_contenedores_total    
     
         return recompensa
     
