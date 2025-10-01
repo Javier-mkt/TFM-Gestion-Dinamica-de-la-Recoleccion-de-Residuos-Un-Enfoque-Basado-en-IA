@@ -5,7 +5,7 @@ import torch as th
 import torch.nn as nn
 from torch.distributions import Categorical
 from torch_geometric.data import Data, Batch
-from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import global_mean_pool, global_max_pool
 
 from gymnasium import spaces
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -37,7 +37,7 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         in_edge_features: int = 2,
         n_tipos: int = 2,
         max_nodes: int | None = None,
-        gnn_layers: int = 3,
+        gnn_layers: int = 4,
         **kwargs,
     ) -> None:
         super().__init__(observation_space, action_space, lr_schedule, *args, **kwargs)
@@ -52,10 +52,10 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         self.gnn_layers = gnn_layers
 
         # Backbone GNN + cabezas
-        self.encoder = EncoderGNN(in_node_features, in_edge_features, hidden_dim, num_layers=gnn_layers)
-        self.pi_tipo = nn.Linear(hidden_dim, n_tipos)   # logits por grafo (tipo)
+        self.encoder = EncoderGNN(in_node_features, in_edge_features, hidden_dim, num_layers = gnn_layers)
+        self.pi_tipo = nn.Linear(2 * hidden_dim, n_tipos)   # logits por grafo (tipo)
         self.pi_dest = nn.Linear(hidden_dim, 1)         # 1 logit por nodo (destino)
-        self.v_head  = nn.Linear(hidden_dim, 1)         # valor por grafo
+        self.v_head  = nn.Linear(2 * hidden_dim, 1)         # valor por grafo
 
         self.encoder.to(self.device)
         self.pi_tipo.to(self.device)
@@ -161,10 +161,10 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
             dst = dst[valid_e]
             ea_b = ea_b[valid_e]
 
-            data_list.append(Data(x=x_b, edge_index=th.stack([src, dst], 0), edge_attr=ea_b))
+            data_list.append(Data(x = x_b, edge_index = th.stack([src, dst], 0), edge_attr = ea_b))
 
         batch = Batch.from_data_list(data_list)
-        return batch, th.tensor(n_valid, dtype=th.long, device=batch.x.device)
+        return batch, th.tensor(n_valid, dtype = th.long, device = batch.x.device)
 
     def _logits_and_value(self, obs: Dict[str, th.Tensor]) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """Devuelve: tipo_logits (B,2), destino_logits (B,N), values (B,)"""
@@ -172,14 +172,17 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         batch = batch.to(self.device)
 
         h = self.encoder(batch.x, batch.edge_index, batch.edge_attr)  # (sum_nodes, H)
-        g = global_mean_pool(h, batch.batch)                          # (B, H)
+        g_mean = global_mean_pool(h, batch.batch)                     # (B, H)
+        g_max  = global_max_pool(h, batch.batch)                      # (B, H)
+        g = th.cat([g_mean, g_max], dim = 1)                            # (B, 2H)
 
         tipo_logits = self.pi_tipo(g)                                 # (B, 2)
         values = self.v_head(g).squeeze(-1)                           # (B,)
 
         node_logits = self.pi_dest(h).squeeze(-1)                     # (sum_nodes,)
+
         B = g.shape[0]
-        destino_logits = th.full((B, self.max_nodes), -1e9, device=self.device)
+        destino_logits = th.full((B, self.max_nodes), -1e9, device = self.device)
         for b in range(B):
             idx = (batch.batch == b).nonzero(as_tuple=False).squeeze(1)
             k = int(n_valid[b].item())
@@ -188,7 +191,7 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         return tipo_logits, destino_logits, values
 
     # ---------- SB3 API ----------
-    def predict(self, observation, state=None, episode_start=None, deterministic: bool = False):
+    def predict(self, observation, state = None, episode_start = None, deterministic: bool = False):
         if not isinstance(observation, dict):
             raise ValueError("Esta policy espera observaciones tipo Dict.")
         obs = {k: v.to(self.device) for k, v in self._ensure_batch(observation).items()}
@@ -199,20 +202,20 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
 
         eps = 1e-8
         mascara_tipo[(mascara_tipo.sum(dim=1) == 0), 0] = True
-        dist_tipo = Categorical(logits=tipo_logits + (mascara_tipo.float() + eps).log())
+        dist_tipo = Categorical(logits = tipo_logits + (mascara_tipo.float() + eps).log())
         a_tipo = dist_tipo.mode if deterministic else dist_tipo.sample()
 
-        b_idx = th.arange(a_tipo.shape[0], device=self.device)
+        b_idx = th.arange(a_tipo.shape[0], device = self.device)
         cond_mask = mask2_tbl[b_idx, a_tipo, :]          # (B,N)
-        cond_mask[(cond_mask.sum(dim=1) == 0), 0] = True
-        dist_dest = Categorical(logits=destino_logits + (cond_mask.float() + eps).log())
+        cond_mask[(cond_mask.sum(dim = 1) == 0), 0] = True
+        dist_dest = Categorical(logits = destino_logits + (cond_mask.float() + eps).log())
         a_dest = dist_dest.mode if deterministic else dist_dest.sample()
 
-        actions = th.stack([a_tipo, a_dest], dim=1)      # (B,2)
+        actions = th.stack([a_tipo, a_dest], dim = 1)      # (B,2)
         try:
             act_np = actions.detach().cpu().numpy()
         except Exception:
-            act_np = np.asarray(actions.detach().cpu().tolist(), dtype=np.int64)
+            act_np = np.asarray(actions.detach().cpu().tolist(), dtype = np.int64)
 
         return act_np, state
 
@@ -225,17 +228,17 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         tipo_logits, destino_logits, _ = self._logits_and_value(obs)
 
         eps = 1e-8
-        mascara_tipo[(mascara_tipo.sum(dim=1) == 0), 0] = True
-        dist_tipo = Categorical(logits=tipo_logits + (mascara_tipo.float() + eps).log())
+        mascara_tipo[(mascara_tipo.sum(dim = 1) == 0), 0] = True
+        dist_tipo = Categorical(logits = tipo_logits + (mascara_tipo.float() + eps).log())
         a_tipo = dist_tipo.mode if deterministic else dist_tipo.sample()
 
-        b_idx = th.arange(a_tipo.shape[0], device=self.device)
+        b_idx = th.arange(a_tipo.shape[0], device = self.device)
         cond_mask = mask2_tbl[b_idx, a_tipo, :]
-        cond_mask[(cond_mask.sum(dim=1) == 0), 0] = True
-        dist_dest = Categorical(logits=destino_logits + (cond_mask.float() + eps).log())
+        cond_mask[(cond_mask.sum(dim = 1) == 0), 0] = True
+        dist_dest = Categorical(logits = destino_logits + (cond_mask.float() + eps).log())
         a_dest = dist_dest.mode if deterministic else dist_dest.sample()
 
-        actions = th.stack([a_tipo, a_dest], dim=1)
+        actions = th.stack([a_tipo, a_dest], dim = 1)
         return actions
 
     def evaluate_actions(self, obs: Dict[str, th.Tensor], actions: th.Tensor):
@@ -251,21 +254,21 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         tipo_logits, destino_logits, values = self._logits_and_value(obs)
         tipo_logits_device = tipo_logits.device  # asegura el device real
 
-        mascara_tipo = obs["mascara_tipo"].to(device=tipo_logits_device, dtype=th.bool)
-        mask2_tbl    = obs["mask2_table"].to(device=tipo_logits_device, dtype=th.bool)
+        mascara_tipo = obs["mascara_tipo"].to(device = tipo_logits_device, dtype = th.bool)
+        mask2_tbl    = obs["mask2_table"].to(device = tipo_logits_device, dtype = th.bool)
 
         # 4) Distribuciones con máscara
         eps = 1e-8
 
         # Tipo
-        mascara_tipo[(mascara_tipo.sum(dim=1) == 0), 0] = True
-        dist_tipo = Categorical(logits=tipo_logits + (mascara_tipo.float() + eps).log())
+        mascara_tipo[(mascara_tipo.sum(dim = 1) == 0), 0] = True
+        dist_tipo = Categorical(logits = tipo_logits + (mascara_tipo.float() + eps).log())
 
          # Destino condicionado por el tipo elegido
-        b_idx = th.arange(a_tipo.shape[0], device=tipo_logits_device)
+        b_idx = th.arange(a_tipo.shape[0], device = tipo_logits_device)
         cond_mask = mask2_tbl[b_idx, a_tipo, :]              # (B, N)
-        cond_mask[(cond_mask.sum(dim=1) == 0), 0] = True
-        dist_dest = Categorical(logits=destino_logits + (cond_mask.float() + eps).log())
+        cond_mask[(cond_mask.sum(dim = 1) == 0), 0] = True
+        dist_dest = Categorical(logits = destino_logits + (cond_mask.float() + eps).log())
 
         # 5) Log-prob conjunta y entropías
         log_prob = dist_tipo.log_prob(a_tipo) + dist_dest.log_prob(a_dest)
@@ -284,18 +287,18 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         tipo_logits, destino_logits, values = self._logits_and_value(obs)
 
         eps = 1e-8
-        mascara_tipo[(mascara_tipo.sum(dim=1) == 0), 0] = True
-        dist_tipo = Categorical(logits=tipo_logits + (mascara_tipo.float() + eps).log())
+        mascara_tipo[(mascara_tipo.sum(dim = 1) == 0), 0] = True
+        dist_tipo = Categorical(logits = tipo_logits + (mascara_tipo.float() + eps).log())
         a_tipo = dist_tipo.mode if deterministic else dist_tipo.sample()
 
         b_idx = th.arange(a_tipo.shape[0], device=tipo_logits.device)
         cond_mask = mask2_tbl[b_idx, a_tipo, :]          # (B,N)
-        cond_mask[(cond_mask.sum(dim=1) == 0), 0] = True
-        dist_dest = Categorical(logits=destino_logits + (cond_mask.float() + eps).log())
+        cond_mask[(cond_mask.sum(dim = 1) == 0), 0] = True
+        dist_dest = Categorical(logits = destino_logits + (cond_mask.float() + eps).log())
         a_dest = dist_dest.mode if deterministic else dist_dest.sample()
 
         log_prob = dist_tipo.log_prob(a_tipo) + dist_dest.log_prob(a_dest)
-        actions = th.stack([a_tipo, a_dest], dim=1)      # (B,2)
+        actions = th.stack([a_tipo, a_dest], dim = 1)      # (B,2)
         return actions, values, log_prob
 
 

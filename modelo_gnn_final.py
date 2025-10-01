@@ -39,7 +39,7 @@ def tensorizacion_grafo(obs):
 
     return x, edge_index, edge_attr
 
-
+'''
 class EncoderGNN(nn.Module):
     """
     Encoder GNN con GINEConv (edge_dim=in_edge_features).
@@ -70,6 +70,45 @@ class EncoderGNN(nn.Module):
         h = x
         for conv in self.layers:
             h = F.relu(conv(h, edge_index, edge_attr))
+        return h
+
+'''
+
+class EncoderGNN(nn.Module):
+    def __init__(self, in_node_features, in_edge_features, hidden_dim: int, num_layers: int, dropout = 0.1):
+        super().__init__()
+        self.layers = nn.ModuleList()
+        self.norms  = nn.ModuleList()
+        self.dropout = nn.Dropout(dropout)
+
+        self.node_proj = nn.Linear(in_node_features, hidden_dim)
+
+        # Capa 1
+        mlp1 = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim), 
+            nn.ReLU(), 
+            nn.Linear(hidden_dim, hidden_dim)
+            )
+        self.layers.append(GINEConv(mlp1, edge_dim = in_edge_features))
+        self.norms.append(nn.LayerNorm(hidden_dim))
+
+        # Capas siguientes
+        for _ in range(num_layers - 1):
+            mlp_h = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim), 
+                nn.ReLU(), 
+                nn.Linear(hidden_dim, hidden_dim)
+                )
+            self.layers.append(GINEConv(mlp_h, edge_dim = in_edge_features))
+            self.norms.append(nn.LayerNorm(hidden_dim))
+
+    def forward(self, x, edge_index, edge_attr):
+        h = self.node_proj(x)
+        for conv, ln in zip(self.layers, self.norms):
+            h_new = conv(h, edge_index, edge_attr)
+            h = ln(h + h_new)          # residual + norm
+            h = F.relu(h)
+            h = self.dropout(h)
         return h
     
 

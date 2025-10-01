@@ -296,6 +296,7 @@ class RecogidaBasurasEnv(gym.Env):
         # Recompensa por visitar el nodo por primera vez y penalización por => 4
 
         recompensa_nuevo_nodo = 0.1
+        penalizacion_repeticion_nodo = 0.05
 
         # Recompensa por primera visita
         self.nodos_visitados_ep[self.nodo_actual] += 1
@@ -304,7 +305,9 @@ class RecogidaBasurasEnv(gym.Env):
 
         # Penalización por exceso de visitas
         if self.nodos_visitados_ep[self.nodo_actual] >= 4:
-            recompensa -= recompensa_nuevo_nodo
+            exceso = self.nodos_visitados_ep[self.nodo_actual] - 3
+            penalizacion = penalizacion_repeticion_nodo * exceso
+            recompensa -= min(penalizacion, 0.15)
 
         return recompensa
 

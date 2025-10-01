@@ -193,12 +193,12 @@ def train_a2c(nodos_indice,
     # policy_kwargs fijos
     n_nodes = len(nodos_indice)
     policy_kwargs = dict(
-        hidden_dim = 128, 
+        hidden_dim = 256, 
         in_node_features = 5, 
         in_edge_features = 2,
         n_tipos = 2, 
         max_nodes = n_nodes, 
-        gnn_layers = 3,
+        gnn_layers = 4,
     )
 
     
@@ -235,10 +235,10 @@ def train_a2c(nodos_indice,
 
     # Checkpoints en CARPETAS
     folder_ckpt = FolderCheckpointCallback(
-        models_dir=models_dir,
-        run_name=run_name,
-        save_freq=save_freq,
-        verbose=1,
+        models_dir = models_dir,
+        run_name = run_name,
+        save_freq = save_freq,
+        verbose = 1,
     )
 
     # Decaimiento de entropía
@@ -250,7 +250,7 @@ def train_a2c(nodos_indice,
         reset_num_timesteps = True,
         callback = [folder_ckpt, ent_decay],
         tb_log_name = run_name,
-        log_interval = 30
+        log_interval = 20
     )
 
     # Guardado final a carpeta
