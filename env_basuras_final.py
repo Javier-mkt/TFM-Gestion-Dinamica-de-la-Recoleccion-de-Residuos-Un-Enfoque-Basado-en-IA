@@ -283,7 +283,7 @@ class RecogidaBasurasEnv(gym.Env):
             self.tiempo_total += 30 #sec, tiempo aprox recogida (cambiarlo a variable)
 
             # Recompensas 
-            recompensa += 0.6 + 0.4 * (basura_disponible / nodo["capacidad_contenedor"])  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
+            recompensa += 0.8 + 0.2 * (basura_disponible / nodo["capacidad_contenedor"])  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
             return recompensa
         
         elif nodo["contenedor"] == 1:
