@@ -15,7 +15,7 @@ from collections import defaultdict
 
 class RecogidaBasurasEnv(gym.Env):
 
-    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 600, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
+    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 120.0, steps_maximo = 250, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
         super().__init__()
         self.nodos_indice = nodos_indice
         self.aristas_indice = aristas_indice
@@ -30,7 +30,8 @@ class RecogidaBasurasEnv(gym.Env):
         self.num_aristas = len(self.aristas_indice)
 
         #self.nodo_inicial = 103 # Entrada pueblo Benimàmet (nodos total Benimàmet)
-        self.nodo_inicial = 79    # Entrada pueblo Benimàmet (nodos norte Benimàmet)
+        #self.nodo_inicial = 79    # Entrada pueblo Benimàmet (nodos norte Benimàmet)
+        self.nodo_inicial = 0     # Ebtrada pueblo Benimàmet (nodos norte reducido Benimàmet)
         # self.nodo_inicial = ...       # Entrada pueblo Benimàmet (nodos sud Benimàmet)
         self.nodo_actual = self.nodo_inicial
         self.nodo_anterior = None
@@ -302,7 +303,7 @@ class RecogidaBasurasEnv(gym.Env):
         factor = 0.11
         alpha = 0.25 
         beta = 0.75   
-        norm_pen = 0.12/27
+        norm_pen = 0.12/17
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
                 distancia = arista.get("distancia", 1000.0)  

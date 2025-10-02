@@ -1,0 +1,6 @@
+{
+  "final": true,
+  "num_timesteps": 4001280,
+  "device": "cuda:0",
+  "saved_at": "2025-10-02 19:59:31"
+}
