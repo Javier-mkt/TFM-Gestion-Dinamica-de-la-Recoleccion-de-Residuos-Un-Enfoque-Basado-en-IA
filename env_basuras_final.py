@@ -31,7 +31,7 @@ class RecogidaBasurasEnv(gym.Env):
 
         #self.nodo_inicial = 103 # Entrada pueblo Benimàmet (nodos total Benimàmet)
         self.nodo_inicial = 79    # Entrada pueblo Benimàmet (nodos norte Benimàmet)
-        # self.nodo_inicial =        # Entrada pueblo Benimàmet (nodos sud Benimàmet)
+        # self.nodo_inicial = ...       # Entrada pueblo Benimàmet (nodos sud Benimàmet)
         self.nodo_actual = self.nodo_inicial
         self.nodo_anterior = None
         self.nodo_actual_recogido = False
@@ -51,7 +51,7 @@ class RecogidaBasurasEnv(gym.Env):
 
         # Espacio de observaciones
         self.observation_space = spaces.Dict({
-            "x": spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_nodos, 5), dtype=np.float32),
+            "x": spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_nodos, 4), dtype=np.float32),
             "edge_index": spaces.Box(low=-1, high=self.num_nodos, shape=(2, self.num_aristas), dtype=np.int64),
             "edge_attr": spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_aristas, 2), dtype=np.float32),
             "mascara_tipo": spaces.MultiBinary(2),
@@ -82,13 +82,13 @@ class RecogidaBasurasEnv(gym.Env):
 
     # Tensorización grafos
     def _tensorizacion_grafo(self):
-        x = np.zeros((self.num_nodos, 5), dtype=np.float32)
+        x = np.zeros((self.num_nodos, 4), dtype=np.float32)
         for nid, nodo in self.nodos_indice.items():
                 x[nid, 0] = float(nodo["contenedor"])
-                x[nid, 1] = float(nodo["capacidad_contenedor"])
-                x[nid, 2] = float(nodo["llenado"])
-                x[nid, 3] = float(nodo["posicion_camion"])
-                x[nid, 4] = float(nodo["llenado_camion"])
+                # x[nid, 1] = float(nodo["capacidad_contenedor"])   # Se quita por redundante (capacidad contenedores cte.)
+                x[nid, 1] = float(nodo["llenado"])
+                x[nid, 2] = float(nodo["posicion_camion"])
+                x[nid, 3] = float(nodo["llenado_camion"])
 
         edge_index = np.zeros((2, self.num_aristas), dtype = np.int64)
         edge_attr = np.zeros((self.num_aristas, 2), dtype = np.float32)
@@ -98,7 +98,7 @@ class RecogidaBasurasEnv(gym.Env):
             edge_index[0, k] = arista["desde"]
             edge_index[1, k] = arista["hasta"]
             edge_attr[k, 0] = float(arista["distancia"])
-            edge_attr[k, 1] = float(arista["tiempo_recorrido"])
+            edge_attr[k, 1] = float(arista["tiempo_recorrido"])    # Cuando se añada dinamismo, como max triplicar. 
             k += 1
 
         return x, edge_index, edge_attr
@@ -107,9 +107,14 @@ class RecogidaBasurasEnv(gym.Env):
 
     # Máscara de acciones
     def _mascara_acciones(self):
+        
+        # Condiciones de la máscara
+        HABILITAR_RECOGER_SIEMPRE = True
+        HABILITAR_QUEDARSE_NODO = False
+
         adjacentes = self._nodos_adjacentes()[self.nodo_actual]
 
-    # Excluir volver al nodo anterior, salvo callejón sin salida
+        # Excluir volver al nodo anterior, salvo callejón sin salida
         if self.nodo_anterior is not None:
             vecinos_validos = [v for v in adjacentes if v != self.nodo_anterior]
             if len(vecinos_validos) == 0:
@@ -122,10 +127,17 @@ class RecogidaBasurasEnv(gym.Env):
         mascara_destino = np.zeros((self.num_nodos,), dtype = np.int8)
         mascara_destino[vecinos_validos] = 1
 
+        if HABILITAR_QUEDARSE_NODO:
+            mascara_destino[self.nodo_actual] = 1
+
         # Mascara tipo [mover, recoger] (1)(0 no recoger, 1 sí recoger)
-        nodo = self.nodos_indice[self.nodo_actual]
-        recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)
-        mascara_tipo = np.array([1, 1 if recoger else 0], dtype = np.int8)
+        if HABILITAR_RECOGER_SIEMPRE:
+            mascara_tipo = np.array([1, 1], dtype = np.int8)
+
+        else:
+            nodo = self.nodos_indice[self.nodo_actual]
+            recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)
+            mascara_tipo = np.array([1, 1 if recoger else 0], dtype = np.int8)
         
         # Mask2_table
         mask2_table = np.zeros((2, self.num_nodos), dtype=np.int8)
@@ -148,7 +160,7 @@ class RecogidaBasurasEnv(gym.Env):
             mask2_table = np.ones((2, self.num_nodos), dtype=np.int8)
 
         obs = {
-        "x":            np.asarray(x, dtype=np.float32).reshape(self.num_nodos, 5),
+        "x":            np.asarray(x, dtype=np.float32).reshape(self.num_nodos, 4),
         "edge_index":   np.asarray(edge_index, dtype=np.int64).reshape(2, self.num_aristas),
         "edge_attr":    np.asarray(edge_attr, dtype=np.float32).reshape(self.num_aristas, 2),
         "mascara_tipo":    np.asarray(mascara_tipo, dtype=np.int8).reshape(2,),
@@ -217,6 +229,11 @@ class RecogidaBasurasEnv(gym.Env):
 
                 recompensa += self._recorrido_camion()
 
+            elif destino == self.nodo_actual:
+                
+                #Penalización por no moverse, es decir, por quedarse
+                recompensa -= 0.3
+
             else:
                 print("Acción inválida, error máscara destino (destino no válido)")
                 recompensa += -0.2
@@ -270,33 +287,34 @@ class RecogidaBasurasEnv(gym.Env):
             return recompensa
         
         elif nodo["contenedor"] == 1:
-            recompensa += -0.2  #Penalización por recoger en nodo sin basura suficiente
+            recompensa += -0.15  #Penalización por recoger en nodo sin basura suficiente
             return recompensa
 
         else:
-            print("Acción inválida, error máscara tipo (acción recogida en nodo no contenedor)")
             recompensa += -0.3
-            return recompensa
+            return recompensa    #Penalizacion por recoger en nodo no contenedor
 
 
 
     def _recorrido_camion(self):
         recompensa = 0
 
-        alpha = 0.0005   # factor distancia # Deshabilitado temporal 0.0005--0.0001
-        beta = 0.005   # factor tiempo  # Deshabilitado temporal 0.005-0.001
+        factor = 0.11
+        alpha = 0.25 
+        beta = 0.75   
+        norm_pen = 0.12/27
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
                 distancia = arista.get("distancia", 1000.0)  
                 tiempo = arista.get("tiempo_recorrido", 100.0)
                 break
         
-        recompensa += -alpha*distancia - beta*tiempo
+        recompensa -= (alpha*(distancia*factor) + beta*tiempo)*norm_pen
 
         # Recompensa por visitar el nodo por primera vez y penalización por => 4
 
-        recompensa_nuevo_nodo = 0.1
-        penalizacion_repeticion_nodo = 0.05
+        recompensa_nuevo_nodo = 0
+        penalizacion_repeticion_nodo = 0
 
         # Recompensa por primera visita
         self.nodos_visitados_ep[self.nodo_actual] += 1
@@ -338,7 +356,7 @@ class RecogidaBasurasEnv(gym.Env):
             if nodo["contenedor"] == 1 and nodo["llenado"] > 0.05:
                 count_contenedores_llenos += 1
         
-        recompensa += (count_contenedores_total - count_contenedores_llenos)/count_contenedores_total    
+        recompensa += ((count_contenedores_total - count_contenedores_llenos)/count_contenedores_total) * 0.5
     
         return recompensa
     

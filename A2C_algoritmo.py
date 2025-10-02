@@ -194,7 +194,7 @@ def train_a2c(nodos_indice,
     n_nodes = len(nodos_indice)
     policy_kwargs = dict(
         hidden_dim = 256, 
-        in_node_features = 5, 
+        in_node_features = 4, 
         in_edge_features = 2,
         n_tipos = 2, 
         max_nodes = n_nodes, 
@@ -250,7 +250,7 @@ def train_a2c(nodos_indice,
         reset_num_timesteps = True,
         callback = [folder_ckpt, ent_decay],
         tb_log_name = run_name,
-        log_interval = 20
+        log_interval = 30
     )
 
     # Guardado final a carpeta

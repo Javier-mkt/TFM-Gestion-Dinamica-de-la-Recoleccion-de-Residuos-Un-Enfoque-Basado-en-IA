@@ -16,7 +16,7 @@ from modelo_gnn_final import EncoderGNN  # tu backbone GNN
 class A2CPolicyGNNMasked(ActorCriticPolicy):
     """
     Observación esperada (Dict):
-      - x:               (N, 5)  float32   ó (B, N, 5)
+      - x:               (N, 4)  float32   ó (B, N, 5)
       - edge_index:      (2, E)  int64     ó (B, 2, E)
       - edge_attr:       (E, 2)  float32   ó (B, E, 2)
       - mascara_tipo:       (2,) int8      ó (B, 2)           (alias aceptado: tipo_mask)
@@ -33,7 +33,7 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         lr_schedule: Schedule,
         *args,
         hidden_dim: int = 256,
-        in_node_features: int = 5,
+        in_node_features: int = 4,
         in_edge_features: int = 2,
         n_tipos: int = 2,
         max_nodes: int | None = None,
