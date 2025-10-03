@@ -112,6 +112,7 @@ class RecogidaBasurasEnv(gym.Env):
         # Condiciones de la máscara
         HABILITAR_RECOGER_SIEMPRE = False
         HABILITAR_QUEDARSE_NODO = False
+        HABILITAR_QUEDARSE_NODO_UNICO = True
 
         adjacentes = self._nodos_adjacentes()[self.nodo_actual]
 
@@ -128,8 +129,16 @@ class RecogidaBasurasEnv(gym.Env):
         mascara_destino = np.zeros((self.num_nodos,), dtype = np.int8)
         mascara_destino[vecinos_validos] = 1
 
+        # Habilita todos los nodos poder quedarse en el mismo
         if HABILITAR_QUEDARSE_NODO:
             mascara_destino[self.nodo_actual] = 1
+
+        # Habilita nodos no contenedores con solo 1 acción a poder quedarse en el mismo sitio
+        if HABILITAR_QUEDARSE_NODO_UNICO:
+            if len(vecinos_validos) == 1 and self.nodos_indice[self.nodo_actual]["contenedor"] == 0:
+                mascara_destino[self.nodo_actual] = 1
+
+
 
         # Mascara tipo [mover, recoger] (1)(0 no recoger, 1 sí recoger)
         if HABILITAR_RECOGER_SIEMPRE:
@@ -138,7 +147,7 @@ class RecogidaBasurasEnv(gym.Env):
         else:
             nodo = self.nodos_indice[self.nodo_actual]
             # recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)
-            recoger = (nodo["contenedor"] == 1)  # Permite recoger más de una vez en un contenedor
+            recoger = (nodo["contenedor"] == 1)  # Permite recoger más de una vez en un contenedor de forma seguida, incluso después de ser vaciado
             mascara_tipo = np.array([1, 1 if recoger else 0], dtype = np.int8)
         
         # Mask2_table
@@ -222,6 +231,9 @@ class RecogidaBasurasEnv(gym.Env):
             if destino in self.adjacencia[self.nodo_actual]:
 
                 # Cambio de nodo del camion
+                if self.nodos_indice[self.nodo_actual]["contenedor"] == 1 and self.nodos_indice[self.nodo_actual]["llenado"] > 0.05:
+                    recompensa += -0.1 # Ppenalización por no recoger un contenedor lleno
+
                 self.nodo_anterior = self.nodo_actual
                 self.nodos_indice[self.nodo_actual]["posicion_camion"] = 0
                 self.nodo_actual = destino
@@ -234,7 +246,7 @@ class RecogidaBasurasEnv(gym.Env):
             elif destino == self.nodo_actual:
                 
                 #Penalización por no moverse, es decir, por quedarse
-                recompensa -= 0.3
+                recompensa -= 0.1 
 
             else:
                 print("Acción inválida, error máscara destino (destino no válido)")
@@ -304,7 +316,7 @@ class RecogidaBasurasEnv(gym.Env):
         factor = 0.11
         alpha = 0.25 
         beta = 0.75   
-        norm_pen = 0.12/17
+        norm_pen = 0.09/17
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
                 distancia = arista.get("distancia", 1000.0)  
@@ -338,11 +350,11 @@ class RecogidaBasurasEnv(gym.Env):
 
         # Recompensa si vuelve a nodo inicial
         if self.nodo_actual == self.nodo_inicial:
-            recompensa += 0.1                        
+            recompensa += 0.0                       
 
         # Penalización si no acaba en nodo inicial
         if truncado:
-            recompensa -= 0.1
+            recompensa -= 0.0
         
         # Recompensa por ratio de basura recogida 
         ratio_recogida = self.carga_camion / self.capacidad_camion
@@ -358,7 +370,7 @@ class RecogidaBasurasEnv(gym.Env):
             if nodo["contenedor"] == 1 and nodo["llenado"] > 0.05:
                 count_contenedores_llenos += 1
         
-        recompensa += ((count_contenedores_total - count_contenedores_llenos)/count_contenedores_total) * 0.5
+        recompensa += ((count_contenedores_total - count_contenedores_llenos)/count_contenedores_total) * 0
     
         return recompensa
     
