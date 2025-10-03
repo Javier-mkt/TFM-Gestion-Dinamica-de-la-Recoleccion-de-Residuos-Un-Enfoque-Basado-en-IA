@@ -250,7 +250,7 @@ def train_a2c(nodos_indice,
         reset_num_timesteps = True,
         callback = [folder_ckpt, ent_decay],
         tb_log_name = run_name,
-        log_interval = 3
+        log_interval = 30
     )
 
     # Guardado final a carpeta
