@@ -110,7 +110,7 @@ class RecogidaBasurasEnv(gym.Env):
     def _mascara_acciones(self):
         
         # Condiciones de la máscara
-        HABILITAR_RECOGER_SIEMPRE = True
+        HABILITAR_RECOGER_SIEMPRE = False
         HABILITAR_QUEDARSE_NODO = False
 
         adjacentes = self._nodos_adjacentes()[self.nodo_actual]
@@ -137,7 +137,8 @@ class RecogidaBasurasEnv(gym.Env):
 
         else:
             nodo = self.nodos_indice[self.nodo_actual]
-            recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)
+            # recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)
+            recoger = (nodo["contenedor"] == 1)  # Permite recoger más de una vez en un contenedor
             mascara_tipo = np.array([1, 1 if recoger else 0], dtype = np.int8)
         
         # Mask2_table
@@ -284,11 +285,11 @@ class RecogidaBasurasEnv(gym.Env):
             self.tiempo_total += 30 #sec, tiempo aprox recogida (cambiarlo a variable)
 
             # Recompensas 
-            recompensa += 0.8 + 0.4 * (basura_disponible / nodo["capacidad_contenedor"])  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
+            recompensa += 1 + 0.4 * (basura_disponible / nodo["capacidad_contenedor"])  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
             return recompensa
         
         elif nodo["contenedor"] == 1:
-            recompensa += -0.15  #Penalización por recoger en nodo sin basura suficiente
+            recompensa += -0.1  #Penalización por recoger en nodo sin basura suficiente
             return recompensa
 
         else:
