@@ -84,7 +84,7 @@ class FolderCheckpointCallback(BaseCallback):
 # ---------------------------
 # Factories de entorno 
 # ---------------------------
-def make_env_thunk(nodos_indice, aristas_indice, seed = 22, steps_maximo = 250, mascara = True, beta_int = 0, alpha = 0.995,
+def make_env_thunk(nodos_indice, aristas_indice, seed = 22, steps_maximo = 175, mascara = True, beta_int = 0, alpha = 0.995,
                    rank = 0, monitor_dir = "./logs/monitor", shared_counts = None, shared_last_ep = None, shared_global_ep = None):
     def _fn():
         e = RecogidaBasurasEnv(
@@ -170,7 +170,7 @@ def train_a2c(nodos_indice,
     for i in range(n_envs):
         thunks.append(
             make_env_thunk(nodos_indice, aristas_indice,
-                           seed = seed + i, steps_maximo = 250, mascara = True,
+                           seed = seed + i, steps_maximo = 175, mascara = True,
                            beta_int = beta_int, alpha = alpha,
                            monitor_dir = os.path.join(tb_dir, run_name, "monitor"),
                            rank = i, shared_counts = shared_counts, shared_last_ep = shared_last_ep,
@@ -188,7 +188,7 @@ def train_a2c(nodos_indice,
     print(f"[INFO] VecEnv usado: {used_vec} | n_envs={vec_env.num_envs}")
 
     # Normalización
-    vec_env = VecNormalize(vec_env, norm_obs = True, norm_reward = True, clip_obs = 10, clip_reward = 1, norm_obs_keys = ["x", "edge_attr"], gamma = gamma)
+    vec_env = VecNormalize(vec_env, norm_obs = True, norm_reward = True, clip_obs = 10, clip_reward = 3, norm_obs_keys = ["x", "edge_attr"], gamma = gamma)
 
     # policy_kwargs fijos
     n_nodes = len(nodos_indice)
