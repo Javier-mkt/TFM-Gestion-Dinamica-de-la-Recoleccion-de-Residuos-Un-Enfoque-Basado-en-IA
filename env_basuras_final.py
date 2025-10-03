@@ -316,7 +316,7 @@ class RecogidaBasurasEnv(gym.Env):
         factor = 0.11
         alpha = 0.25 
         beta = 0.75   
-        norm_pen = 0.09/17
+        norm_pen = 0.07/17
         for _, arista in self.aristas_indice.items():
             if arista["desde"] == self.nodo_anterior and arista["hasta"] == self.nodo_actual:
                 distancia = arista.get("distancia", 1000.0)  
