@@ -112,7 +112,7 @@ class RecogidaBasurasEnv(gym.Env):
         # Condiciones de la máscara
         HABILITAR_RECOGER_SIEMPRE = False
         HABILITAR_QUEDARSE_NODO = False
-        HABILITAR_QUEDARSE_NODO_UNICO = True
+        HABILITAR_QUEDARSE_NODO_UNICO = False
 
         adjacentes = self._nodos_adjacentes()[self.nodo_actual]
 
@@ -297,7 +297,7 @@ class RecogidaBasurasEnv(gym.Env):
             self.tiempo_total += 30 #sec, tiempo aprox recogida (cambiarlo a variable)
 
             # Recompensas 
-            recompensa += 1 + 0.4 * (basura_disponible / nodo["capacidad_contenedor"])  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
+            recompensa += 0.6 + 0.4 * (basura_disponible / nodo["capacidad_contenedor"])  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
             return recompensa
         
         elif nodo["contenedor"] == 1:
@@ -371,6 +371,9 @@ class RecogidaBasurasEnv(gym.Env):
                 count_contenedores_llenos += 1
         
         recompensa += ((count_contenedores_total - count_contenedores_llenos)/count_contenedores_total) * 0
+
+        if count_contenedores_total == count_contenedores_llenos:
+            recompensa += -1.2
     
         return recompensa
     
