@@ -112,7 +112,7 @@ class RecogidaBasurasEnv(gym.Env):
         # Condiciones de la máscara
         HABILITAR_RECOGER_SIEMPRE = False
         HABILITAR_QUEDARSE_NODO = False
-        HABILITAR_QUEDARSE_NODO_UNICO = False
+        HABILITAR_QUEDARSE_NODO_UNICO = True
 
         adjacentes = self._nodos_adjacentes()[self.nodo_actual]
 
