@@ -31,9 +31,9 @@ class RecogidaBasurasEnv(gym.Env):
 
         #self.nodo_inicial = 103 # Entrada pueblo Benimàmet (nodos total Benimàmet)
         #self.nodo_inicial = 79    # Entrada pueblo Benimàmet (nodos norte Benimàmet)
-        self.nodo_inicial = 0     # Ebtrada pueblo Benimàmet (nodos norte reducido Benimàmet)
-        # self.nodo_inicial = ...       # Entrada pueblo Benimàmet (nodos sud Benimàmet)
+        self.nodo_inicial = 14     # Entrada pueblo Benimàmet (nodos norte reducido Benimàmet)
         self.nodo_actual = self.nodo_inicial
+        self.nodo_final = 29 # Entrada pueblo Benimàmet (nodos norte reducido Benimàmet)
         self.nodo_anterior = None
         self.nodo_actual_recogido = False
 
@@ -262,7 +262,7 @@ class RecogidaBasurasEnv(gym.Env):
         # Terminado
         if self.carga_camion >= self.capacidad_camion:
             terminado = True
-        if self.nodo_actual == self.nodo_inicial and self.steps > 1:
+        if self.nodo_actual == self.nodo_final and self.steps > 1:
             terminado = True
         
         # Truncado
@@ -349,7 +349,7 @@ class RecogidaBasurasEnv(gym.Env):
         recompensa = 0
 
         # Recompensa si vuelve a nodo inicial
-        if self.nodo_actual == self.nodo_inicial:
+        if self.nodo_actual == self.nodo_final:
             recompensa += 0.0                       
 
         # Penalización si no acaba en nodo inicial
@@ -372,7 +372,7 @@ class RecogidaBasurasEnv(gym.Env):
         
         recompensa += ((count_contenedores_total - count_contenedores_llenos)/count_contenedores_total) * 0
 
-        if count_contenedores_total == count_contenedores_llenos:
+        if count_contenedores_total <= (count_contenedores_llenos + 1):
             recompensa += -1.2
     
         return recompensa
