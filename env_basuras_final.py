@@ -15,7 +15,7 @@ from collections import defaultdict
 
 class RecogidaBasurasEnv(gym.Env):
 
-    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 50.0, steps_maximo = 75, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
+    def __init__(self, nodos_indice, aristas_indice, capacidad_camion = 50.0, steps_maximo = 175, mascara = True, seed = None): # añadida máscara para indicar si el agente solo elije las acciones permitidas o pueda elegir todas las acciones posibles (incluso las prohibidas)
         super().__init__()
         self.nodos_indice = nodos_indice
         self.aristas_indice = aristas_indice
@@ -31,12 +31,12 @@ class RecogidaBasurasEnv(gym.Env):
 
         #self.nodo_inicial = 103                 # Entrada pueblo Benimàmet (nodos total Benimàmet)
         #self.nodo_inicial = 79                  # Entrada pueblo Benimàmet (nodos norte Benimàmet)
-        #self.nodo_inicial = 14                  # Entrada pueblo Benimàmet (nodos norte reducido Benimàmet)
-        self.nodo_inicial = 15                  # Entrada pueblo Benimàmet (nodos nord-oeste Benimàmet)
+        self.nodo_inicial = 14                  # Entrada pueblo Benimàmet (nodos norte reducido Benimàmet)
+        #self.nodo_inicial = 15                  # Entrada pueblo Benimàmet (nodos nord-oeste Benimàmet)
         self.nodo_actual = self.nodo_inicial
         #self.nodo_final = self.nodo_incial      # Salida pueblo Benimàmet (nodos total Benimàmet, norte Benimàmet)
-        #self.nodo_final = 29                    # Salida pueblo Benimàmet (nodos norte reducido Benimàmet)
-        self.nodo_final = 10                    # Salida pueblo Benimàmet (nodos nord-oeste Benimàmet)
+        self.nodo_final = 29                    # Salida pueblo Benimàmet (nodos norte reducido Benimàmet)
+        #self.nodo_final = 10                    # Salida pueblo Benimàmet (nodos nord-oeste Benimàmet)
         self.nodo_anterior = None
         self.nodo_actual_recogido = False
 
