@@ -39,6 +39,7 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         n_tipos: int = 2,
         max_nodes: int | None = None,
         gnn_layers: int = 3,
+        encoder_dropout: float = 0.1,
         **kwargs,
     ) -> None:
         super().__init__(observation_space, action_space, lr_schedule, *args, **kwargs)
@@ -53,7 +54,7 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         self.gnn_layers = gnn_layers
 
         # Backbone GNN + cabezas
-        self.encoder = EncoderGNN(in_node_features, in_edge_features, hidden_dim, num_layers = gnn_layers)
+        self.encoder = EncoderGNN(in_node_features, in_edge_features, hidden_dim, num_layers = gnn_layers, dropout = encoder_dropout)
         self.pi_tipo = nn.Linear(2 * hidden_dim, n_tipos)   # logits por grafo (tipo)
         self.pi_dest = nn.Linear(hidden_dim, 1)             # 1 logit por nodo (destino)
         self.v_head  = nn.Linear(2 * hidden_dim, 1)         # valor por grafo
@@ -81,6 +82,7 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
                 n_tipos = self.n_tipos,
                 max_nodes = self.max_nodes,
                 gnn_layers = self.gnn_layers,
+                encoder_dropout = self.encoder_dropout
             )
         )
         return data

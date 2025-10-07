@@ -15,6 +15,8 @@ from stable_baselines3.common.logger import configure
 from sb3_policy_mascara import A2CPolicyGNNMasked
 from env_basuras_final import RecogidaBasurasEnv
 from wrapper.exploracion_A2C import DecaimientoEntropiaCallback, RecompensIntrinsecaGlobal
+import torch as th
+from torch.optim import AdamW, Adam
 
 
 # Guardado a carpeta
@@ -84,7 +86,7 @@ class FolderCheckpointCallback(BaseCallback):
 # ---------------------------
 # Factories de entorno 
 # ---------------------------
-def make_env_thunk(nodos_indice, aristas_indice, seed = 22, steps_maximo = 175, mascara = True, beta_int = 0, alpha = 0.995,
+def make_env_thunk(nodos_indice, aristas_indice, seed = 22, steps_maximo = 75, mascara = True, beta_int = 0, alpha = 0.995,
                    rank = 0, monitor_dir = "./logs/monitor", shared_counts = None, shared_last_ep = None, shared_global_ep = None):
     def _fn():
         e = RecogidaBasurasEnv(
@@ -145,7 +147,10 @@ def train_a2c(nodos_indice,
               run_name = "run_default",
               models_dir = "./models/a2c",
               tb_dir = "./logs/tb-a2c",
-              save_freq = 100_000):
+              save_freq = 100_000,
+              optimizer_class: str = "adamv",
+              weight_decay: float = 1e-4
+              ):
     """
     - Multiprocessing: SubprocVecEnv (fallback a DummyVecEnv si hiciera falta)
     - Checkpoints en carpetas cada `save_freq` (por defecto, 100k)
@@ -170,7 +175,7 @@ def train_a2c(nodos_indice,
     for i in range(n_envs):
         thunks.append(
             make_env_thunk(nodos_indice, aristas_indice,
-                           seed = seed + i, steps_maximo = 175, mascara = True,
+                           seed = seed + i, steps_maximo = 75, mascara = True,
                            beta_int = beta_int, alpha = alpha,
                            monitor_dir = os.path.join(tb_dir, run_name, "monitor"),
                            rank = i, shared_counts = shared_counts, shared_last_ep = shared_last_ep,
@@ -199,6 +204,7 @@ def train_a2c(nodos_indice,
         n_tipos = 2, 
         max_nodes = n_nodes, 
         gnn_layers = 3,
+        encoder_dropout = 0.1
     )
 
     
@@ -221,6 +227,36 @@ def train_a2c(nodos_indice,
         tensorboard_log = tb_dir,
     )
 
+    # lr inicial actual del optimizador creado por SB3 (respetar schedule)
+    init_lr = model.policy.optimizer.param_groups[0]['lr']
+
+    # Separar parámetros: GNN con wd, heads sin wd
+    gnn_params   = list(model.policy.encoder.parameters())
+    heads_params = list(model.policy.pi_tipo.parameters()) + \
+                   list(model.policy.pi_dest.parameters()) + \
+                   list(model.policy.v_head.parameters())
+
+    if str(optimizer_class).lower() == "adamw":
+        new_opt = AdamW(
+            [
+                {"params": gnn_params,   "weight_decay": float(weight_decay)},
+                {"params": heads_params, "weight_decay": 0.0},
+            ],
+            lr = init_lr
+        )
+    else:
+        # Fallback: Adam sin weight decay
+        new_opt = Adam(
+            [
+                {"params": gnn_params,   "weight_decay": 0.0},
+                {"params": heads_params, "weight_decay": 0.0},
+            ],
+            lr = init_lr
+        )
+
+    # Sustituir el optimizador de la policy (SB3 lo usará en learn())
+    model.policy.optimizer = new_opt
+    # =========================
 
     # --- CSV LOGGER (progress.csv + tensorboard) ---
     from stable_baselines3.common.logger import configure
@@ -250,7 +286,7 @@ def train_a2c(nodos_indice,
         reset_num_timesteps = True,
         callback = [folder_ckpt, ent_decay],
         tb_log_name = run_name,
-        log_interval = 20
+        log_interval = 4
     )
 
     # Guardado final a carpeta
