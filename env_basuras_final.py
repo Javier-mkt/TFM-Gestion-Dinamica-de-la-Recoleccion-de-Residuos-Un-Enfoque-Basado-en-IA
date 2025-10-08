@@ -115,7 +115,7 @@ class RecogidaBasurasEnv(gym.Env):
         # Condiciones de la máscara
         HABILITAR_RECOGER_SIEMPRE = False
         HABILITAR_QUEDARSE_NODO = False
-        HABILITAR_QUEDARSE_NODO_UNICO = True
+        HABILITAR_QUEDARSE_NODO_UNICO = False   # Solución mejor para no tener casos deterministas (+ premitir recoger siempre en nodos basura)
 
         adjacentes = self._nodos_adjacentes()[self.nodo_actual]
 
@@ -149,8 +149,8 @@ class RecogidaBasurasEnv(gym.Env):
 
         else:
             nodo = self.nodos_indice[self.nodo_actual]
-            # recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)
-            recoger = (nodo["contenedor"] == 1)  # Permite recoger más de una vez en un contenedor de forma seguida, incluso después de ser vaciado
+            recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)  # No permite recoger nodos 2 o más veces seguidas
+            # recoger = (nodo["contenedor"] == 1)  # Permite recoger más de una vez en un contenedor de forma seguida, incluso después de ser vaciado
             mascara_tipo = np.array([1, 1 if recoger else 0], dtype = np.int8)
         
         # Mask2_table
