@@ -12,6 +12,9 @@ import torch
 import networkx as nx 
 import osmnx as ox
 from collections import defaultdict
+from typing import Optional, Tuple, Set, List
+from numpy.random import Generator, PCG64
+
 
 class RecogidaBasurasEnv(gym.Env):
 
@@ -41,6 +44,13 @@ class RecogidaBasurasEnv(gym.Env):
         self.nodo_actual_recogido = False
 
         self.adjacencia = self._nodos_adjacentes()  
+
+        # Dinamismo contenedores
+        self.perc_llenado_rango = (0.75, 0.80) # Siempre mayor al 50 %
+        self.nivel_llenado_rango = (0.70, 0.95)
+        self.umbral_llenado = 0.65
+        self._contenedores_ids = [i for i, n in self.nodos_indice.items() if int(n.get("contenedor", 0)) == 1]
+        self.normalizacion_recompensa = 1.0
 
         # Recompensa extrínseca visita nuevos nodos
         self.nodos_visitados_ep = defaultdict(int)
@@ -115,7 +125,7 @@ class RecogidaBasurasEnv(gym.Env):
         # Condiciones de la máscara
         HABILITAR_RECOGER_SIEMPRE = False
         HABILITAR_QUEDARSE_NODO = False
-        HABILITAR_QUEDARSE_NODO_UNICO = False   # Solución mejor para no tener casos deterministas (+ premitir recoger siempre en nodos basura)
+        HABILITAR_QUEDARSE_NODO_UNICO = True   # Solución mejor para no tener casos deterministas (+ premitir recoger siempre en nodos basura)
 
         adjacentes = self._nodos_adjacentes()[self.nodo_actual]
 
@@ -149,8 +159,8 @@ class RecogidaBasurasEnv(gym.Env):
 
         else:
             nodo = self.nodos_indice[self.nodo_actual]
-            recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)  # No permite recoger nodos 2 o más veces seguidas
-            # recoger = (nodo["contenedor"] == 1)  # Permite recoger más de una vez en un contenedor de forma seguida, incluso después de ser vaciado
+            # recoger = (nodo["contenedor"] == 1 and not self.nodo_actual_recogido)  # No permite recoger nodos 2 o más veces seguidas
+            recoger = (nodo["contenedor"] == 1)  # Permite recoger más de una vez en un contenedor de forma seguida, incluso después de ser vaciado
             mascara_tipo = np.array([1, 1 if recoger else 0], dtype = np.int8)
         
         # Mask2_table
@@ -189,10 +199,7 @@ class RecogidaBasurasEnv(gym.Env):
     def reset(self, seed = None, options = None):  
         if seed is not None:
             self.set_seed(seed)
-        elif self.seed_value is not None:
-            self.set_seed(self.seed_value)
             
-
         super().reset(seed = seed)
         self.nodo_actual = self.nodo_inicial
         self.carga_camion = 0.0
@@ -204,12 +211,24 @@ class RecogidaBasurasEnv(gym.Env):
         self.nodo_actual_recogido = False
 
         # Reinicio de los nodos: rellenado de contenedores e incialización posicion inicial camión 
-        for indice, nodo in self.nodos_indice.items():
-            nodo["llenado"] = 0.5 if nodo["contenedor"] == 1 else 0 #Futuro, np.random(0.0, 0.90)
-            nodo["llenado_camion"] = 0.0
-            nodo["posicion_camion"] = 1 if indice == self.nodo_inicial else 0
+        n_cont = len(self._contenedores_ids)
 
-        # Inicializacion nuevas condiciones inciales tráfico
+        p = np.random.uniform(*self.perc_llenado_rango)           # % en [0.75, 0.80]
+        n_cont_llenos = int(round(p * n_cont))
+        self.normalizacion_recompensa = n_cont / max(1, n_cont_llenos)
+        llenos_ind = set(np.random.choice(self._contenedores_ids, size = n_cont_llenos, replace = False))
+
+
+        # --- Asignación de llenados y flags del camión ---
+        lo, hi = self.nivel_llenado_rango
+        for indice, nodo in self.nodos_indice.items():
+            nodo["posicion_camion"] = 1 if indice == self.nodo_inicial else 0
+            nodo["llenado_camion"] = 0.0
+            if nodo["contenedor"] == 1:
+                # Por encima: llenado alto; por debajo: 0.0 (penaliza igual que vacío)
+                nodo["llenado"] = float(np.random.uniform(lo, hi)) if indice in llenos_ind else 0.2
+            else:
+                nodo["llenado"] = 0
 
         obs = self._obtener_observacion()
         info = {}
@@ -234,8 +253,8 @@ class RecogidaBasurasEnv(gym.Env):
             if destino in self.adjacencia[self.nodo_actual]:
 
                 # Cambio de nodo del camion
-                if self.nodos_indice[self.nodo_actual]["contenedor"] == 1 and self.nodos_indice[self.nodo_actual]["llenado"] > 0.05:
-                    recompensa += -0.1 # Ppenalización por no recoger un contenedor lleno
+                if self.nodos_indice[self.nodo_actual]["contenedor"] == 1 and self.nodos_indice[self.nodo_actual]["llenado"] >= self.umbral_llenado:
+                    recompensa += (-0.1) * self.normalizacion_recompensa # Ppenalización por no recoger un contenedor lleno
 
                 self.nodo_anterior = self.nodo_actual
                 self.nodos_indice[self.nodo_actual]["posicion_camion"] = 0
@@ -249,14 +268,14 @@ class RecogidaBasurasEnv(gym.Env):
             elif destino == self.nodo_actual:
                 
                 #Penalización por no moverse, es decir, por quedarse
-                recompensa -= 0.1 
+                recompensa -= (0.1) * self.normalizacion_recompensa
 
             else:
                 print("Acción inválida, error máscara destino (destino no válido)")
-                recompensa += -0.2
+                recompensa += (-0.2) * self.normalizacion_recompensa
         else: 
             print("Acción inválida, error máscara tipo (fuera rango)")
-            recompensa += -0.2
+            recompensa += (-0.2) * self.normalizacion_recompensa
 
         terminado = False
         truncado = False
@@ -285,7 +304,7 @@ class RecogidaBasurasEnv(gym.Env):
     def _recogida_basura(self):
         recompensa = 0
         nodo = self.nodos_indice[self.nodo_actual]
-        if nodo["contenedor"] == 1 and nodo["llenado"] > 0.05:
+        if nodo["contenedor"] == 1 and nodo["llenado"] >= self.umbral_llenado:
             basura_disponible = nodo["llenado"] * nodo["capacidad_contenedor"]
             self.carga_camion += basura_disponible
 
@@ -300,15 +319,28 @@ class RecogidaBasurasEnv(gym.Env):
             self.tiempo_total += 30 #sec, tiempo aprox recogida (cambiarlo a variable)
 
             # Recompensas 
-            recompensa += 0.6 + 0.4 * (basura_disponible / nodo["capacidad_contenedor"])  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
-            return recompensa
+            recompensa += (0.6 + 0.4 * (basura_disponible / nodo["capacidad_contenedor"])) * self.normalizacion_recompensa  # 1 factor arbitrario (recompensa inicial y sencilla) (si es menor al 50/70%, añadir mini penalización)
+            return recompensa 
         
         elif nodo["contenedor"] == 1:
-            recompensa += -0.1  #Penalización por recoger en nodo sin basura suficiente
+            basura_disponible = nodo["llenado"] * nodo["capacidad_contenedor"]
+            self.carga_camion += basura_disponible
+
+            carga_camion_norm = min(1.0, self.carga_camion / self.capacidad_camion)
+
+            nodo["llenado"] = 0 
+
+            for n in self.nodos_indice.values():
+                n["llenado_camion"] = carga_camion_norm
+            
+            # Tiempo recogida 
+            self.tiempo_total += 30 #sec, tiempo aprox recogida (cambiarlo a variable)
+            
+            recompensa += (-0.1) * self.normalizacion_recompensa  #Penalización por recoger en nodo sin basura suficiente
             return recompensa
 
         else:
-            recompensa += -0.3
+            recompensa += (-0.3) * self.normalizacion_recompensa
             return recompensa    #Penalizacion por recoger en nodo no contenedor
 
 
@@ -326,7 +358,7 @@ class RecogidaBasurasEnv(gym.Env):
                 tiempo = arista.get("tiempo_recorrido", 100.0)
                 break
         
-        recompensa -= (alpha*(distancia*factor) + beta*tiempo)*norm_pen
+        recompensa -= ((alpha*(distancia*factor) + beta*tiempo)*norm_pen) * self.normalizacion_recompensa
 
         # Recompensa por visitar el nodo por primera vez y penalización por => 4
 

@@ -148,7 +148,7 @@ def train_a2c(nodos_indice,
               models_dir = "./models/a2c",
               tb_dir = "./logs/tb-a2c",
               save_freq = 100_000,
-              optimizer_class: str = "adamv",
+              optimizer_class: str = "adamw",
               weight_decay: float = 1e-4
               ):
     """
