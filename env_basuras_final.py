@@ -75,7 +75,7 @@ class RecogidaBasurasEnv(gym.Env):
 
 
 
-    # Creación dle diccionario de nodos accesibles a partir de uno 
+    # Creación del diccionario de nodos accesibles a partir de uno 
     def _nodos_adjacentes(self):  
         adj = {nid: [] for nid in self.nodos_indice.keys()}
         for _, data in self.aristas_indice.items():
@@ -99,7 +99,7 @@ class RecogidaBasurasEnv(gym.Env):
         x = np.zeros((self.num_nodos, 4), dtype=np.float32)
         for nid, nodo in self.nodos_indice.items():
                 x[nid, 0] = float(nodo["contenedor"])
-                # x[nid, 1] = float(nodo["capacidad_contenedor"])   # Se quita por redundante (capacidad contenedores cte.)
+                # x[nid, 1] = float(nodo["capacidad_contenedor"])   # Se quita por redundante (capacidad contenedores con el mismo valor cte.)
                 x[nid, 1] = float(nodo["llenado"])
                 x[nid, 2] = float(nodo["posicion_camion"])
                 x[nid, 3] = float(nodo["llenado_camion"])
@@ -123,8 +123,8 @@ class RecogidaBasurasEnv(gym.Env):
     def _mascara_acciones(self):
         
         # Condiciones de la máscara
-        HABILITAR_RECOGER_SIEMPRE = False
-        HABILITAR_QUEDARSE_NODO = False
+        HABILITAR_RECOGER_SIEMPRE = False      #
+        HABILITAR_QUEDARSE_NODO = False        
         HABILITAR_QUEDARSE_NODO_UNICO = True   # Solución mejor para no tener casos deterministas (+ premitir recoger siempre en nodos basura)
 
         adjacentes = self._nodos_adjacentes()[self.nodo_actual]
@@ -254,7 +254,7 @@ class RecogidaBasurasEnv(gym.Env):
 
                 # Cambio de nodo del camion
                 if self.nodos_indice[self.nodo_actual]["contenedor"] == 1 and self.nodos_indice[self.nodo_actual]["llenado"] >= self.umbral_llenado:
-                    recompensa += (-0.1) * self.normalizacion_recompensa # Ppenalización por no recoger un contenedor lleno
+                    recompensa += (-0.1) * self.normalizacion_recompensa # Penalización por no recoger un contenedor lleno
 
                 self.nodo_anterior = self.nodo_actual
                 self.nodos_indice[self.nodo_actual]["posicion_camion"] = 0
@@ -360,56 +360,12 @@ class RecogidaBasurasEnv(gym.Env):
         
         recompensa -= ((alpha*(distancia*factor) + beta*tiempo)*norm_pen) * self.normalizacion_recompensa
 
-        # Recompensa por visitar el nodo por primera vez y penalización por => 4
-
-        recompensa_nuevo_nodo = 0
-        penalizacion_repeticion_nodo = 0
-
-        # Recompensa por primera visita
-        self.nodos_visitados_ep[self.nodo_actual] += 1
-        if self.nodos_visitados_ep[self.nodo_actual] <= 1:
-            recompensa += recompensa_nuevo_nodo
-
-        # Penalización por exceso de visitas
-        if self.nodos_visitados_ep[self.nodo_actual] >= 4:
-            exceso = self.nodos_visitados_ep[self.nodo_actual] - 3
-            penalizacion = penalizacion_repeticion_nodo * exceso
-            recompensa -= min(penalizacion, 0.15)
-
         return recompensa
 
 
 
     def _recompensa_final(self, terminado, truncado):
         recompensa = 0
-
-        # Recompensa si vuelve a nodo inicial
-        if self.nodo_actual == self.nodo_final:
-            recompensa += 0.0                       
-
-        # Penalización si no acaba en nodo inicial
-        if truncado:
-            recompensa -= 0.0
-        
-        # Recompensa por ratio de basura recogida 
-        ratio_recogida = self.carga_camion / self.capacidad_camion
-        recompensa += ratio_recogida*0                
-
-        # Penalizacion por dejar contenedores sin recoger:
-        count_contenedores_total = 0
-        count_contenedores_llenos = 0
-
-        for indice, nodo in self.nodos_indice.items():
-            if nodo["contenedor"] == 1:
-                count_contenedores_total += 1
-            if nodo["contenedor"] == 1 and nodo["llenado"] > 0.05:
-                count_contenedores_llenos += 1
-        
-        recompensa += ((count_contenedores_total - count_contenedores_llenos)/count_contenedores_total) * 0
-
-        if count_contenedores_total <= (count_contenedores_llenos + 1):
-            recompensa += -1.2
-    
         return recompensa
     
 
@@ -417,52 +373,3 @@ class RecogidaBasurasEnv(gym.Env):
     def render(self):
         print(f"Nodo actual: {self.nodo_actual} | Carga camión: {self.carga_camion:.2f} kg | Step: {self.steps}")
 
-    
-    
-    
-
-
-# Función testeo del entorno (antigua versión)
-
-def agente_aleatorio(env, max_steps=20):
-    obs, info = env.reset()
-    terminated, truncated = False, False
-    contenedores_visitados = 0
-    recompensa_acumulada = 0
-
-    for step in range(max_steps):
-        print(f"\n--- Step {step + 1} ---")
-        print(f"Observación: {obs['simple']}")
-        print(f"Info: {info}")
-
-        nodo_tiene_contenedor = obs["simple"]["contenedor"] == 1
-        lleno_contenedor = obs["simple"]["llenado_contenedor"] > 0
-
-        if info["mascara"]["mascara_tipo"][0]:
-            # 100% probabilidad de recoger, 0% de moverse
-            contenedores_visitados += 1
-            if random.random() <= 1.0:
-                action = {"tipo": 1, "destino": 0}
-            else:
-                posibles = np.where(info["mascara"]["mascara_destino"])[0]
-                destino = int(random.choice(posibles)) if len(posibles) > 0 else 0
-                action = {"tipo": 0, "destino": destino}
-        else:
-            # Nodo sin contenedor o contenedor vacío → siempre moverse
-            posibles = np.where(info["mascara"]["mascara_destino"])[0]
-            destino = int(random.choice(posibles)) if len(posibles) > 0 else 0
-            action = {"tipo": 0, "destino": destino}
-
-        print(f"Acción elegida: {action}")
-        obs, reward, terminated, truncated, info = env.step(action)
-        print(terminated)
-        print(truncated)
-        print(f"Recompensa: {reward}")
-        recompensa_acumulada += reward
-        env.render()
-
-        if terminated or truncated:
-            print("Episodio terminado.")
-            print(f"Contenedores_visitados = {contenedores_visitados}")
-            print(f"Recompensa acumulada = {recompensa_acumulada}")
-            break

@@ -284,7 +284,7 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         mask2_tbl    = obs["mask2_table"].to(device=tipo_logits.device, dtype=th.bool)
 
         # 4) Distribuciones con máscara (duro)
-        mascara_tipo[(mascara_tipo.sum(dim=1) == 0), 0] = True
+        mascara_tipo[(mascara_tipo.sum(dim = 1) == 0), 0] = True
         tipo_logits = self._masked_logits(tipo_logits, mascara_tipo)  # [MOD]
         dist_tipo = Categorical(logits=tipo_logits)
 
@@ -296,7 +296,7 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         for b in range(cond_mask.size(0)):
             cond_mask[b, n_valid[b]:] = False
 
-        cond_mask[(cond_mask.sum(dim=1) == 0), 0] = True
+        cond_mask[(cond_mask.sum(dim = 1) == 0), 0] = True
         destino_logits = self._masked_logits(destino_logits, cond_mask)  # [MOD]
         dist_dest = Categorical(logits=destino_logits)
 
@@ -315,17 +315,17 @@ class A2CPolicyGNNMasked(ActorCriticPolicy):
         SB3 llama aquí durante learn().
         Devuelve: actions (B,2), values (B,), log_prob (B,)
         """
-        mascara_tipo = obs["mascara_tipo"].to(device=self.device, dtype=th.bool)   # (B,2)
-        mask2_tbl    = obs["mask2_table"].to(device=self.device, dtype=th.bool)    # (B,2,N)
+        mascara_tipo = obs["mascara_tipo"].to(device = self.device, dtype=th.bool)   # (B,2)
+        mask2_tbl    = obs["mask2_table"].to(device = self.device, dtype=th.bool)    # (B,2,N)
 
         tipo_logits, destino_logits, values = self._logits_and_value(obs)
 
-        mascara_tipo[(mascara_tipo.sum(dim=1) == 0), 0] = True
+        mascara_tipo[(mascara_tipo.sum(dim = 1) == 0), 0] = True
         tipo_logits = self._masked_logits(tipo_logits, mascara_tipo)  # [MOD]
-        dist_tipo = Categorical(logits=tipo_logits)
+        dist_tipo = Categorical(logits = tipo_logits)
         a_tipo = dist_tipo.mode if deterministic else dist_tipo.sample()
 
-        b_idx = th.arange(a_tipo.shape[0], device=tipo_logits.device)
+        b_idx = th.arange(a_tipo.shape[0], device = tipo_logits.device)
         cond_mask = mask2_tbl[b_idx, a_tipo, :]          # (B,N)
 
         # [MOD] coherencia con n_valid
